@@ -1,0 +1,18 @@
+node_modules/
+build/
+/dist/
+.DS_Store
+._*
+*.dSYM/
+Tests/integration
+Tests/interrupts
+Tests/serial
+# Original one-off resource generator depends on local course materials.
+Tests/prepare_resources.py
+Tests/*Project.X/
+Tests/*.json
+Tests/*.png
+Tests/*.log
+Examples/*/build/
+Examples/*/dist/
+**/nbproject/private/
