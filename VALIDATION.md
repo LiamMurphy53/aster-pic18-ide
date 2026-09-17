@@ -20,3 +20,7 @@ Validation performed on this Mac with its installed MPLAB X 6.20, pic-as 2.46, a
 PICkit 3 hardware flashing/debugging and a physical serial adapter have not been validated. No board was programmed during these checks.
 
 The backend integration suite, interrupt suite, serial test, and native UI check are separate so simulator correctness is not inferred from a visual mockup. Locally generated results and screenshots in `Tests` are excluded from Git. The public integration suite runs 21 checks by default; the additional local-project build is optional through `ASTER_TEST_PROJECT`. No course assignment is included.
+
+## Breakpoint fix validation — September 17, 2026
+
+All 10 interrupt/backend checks and 16 native UI checks passed. Regression coverage now includes real gutter mouse events on line numbers and the left margin, immediate marker addition/removal, breakpoints set before debugging, stopping at a clicked breakpoint, retaining/reinstalling breakpoints across sessions, INT0 flag injection, and an RB0 rising edge. UI checks used isolated sample projects; the active user session was left running. Physical hardware was not exercised.

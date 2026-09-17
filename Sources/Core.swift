@@ -343,7 +343,8 @@ final class IDECore {
         if p.prebuilt == nil { let b = try build(debug:true,tool:tool); guard b["ok"] as? Bool == true else { throw IDEError("Fix the build errors before starting the debugger.") } }
         let elf = try p.artifact("elf",image:"debug")
         localDataSymbols = try p.localDataSymbols()
-        let s = try newSession(); debugger = s; debugTool = tool; lastLocation = [:]; breakpoints = []
+        clearBreakpointBindings()
+        let s = try newSession(); debugger = s; debugTool = tool; lastLocation = [:]
         do {
             _ = try s.checked("device PIC18F87K22")
             if tool == "PICkit3" { _ = try s.checked("set poweroptions.powerenable false") }
@@ -351,10 +352,14 @@ final class IDECore {
             let result = try s.checked("program \(quoteMDB(elf.path))",timeout:90)
             guard result.lowercased().contains("program succeeded") else { throw IDEError("MDB did not confirm that the image loaded.\n"+result) }
             _ = try s.checked("reset")
+            for i in breakpoints.indices {
+                let path = breakpoints[i]["path"] as! String, line = breakpoints[i]["line"] as! Int
+                breakpoints[i]["id"] = try installBreakpoint(s,path:path,line:line)
+            }
             lastLocation = ["address":"0x0000"]
             onEvent("debugState",["state":"paused","tool":tool])
             return try inspect(["WREG","STATUS","BSR","TRISD","LATD","PORTD"])
-        } catch { s.stop(); debugger = nil; onEvent("debugState",["state":"disconnected"]); throw error }
+        } catch { s.stop(); debugger = nil; clearBreakpointBindings(); onEvent("debugState",["state":"disconnected"]); throw error }
     }
     func inspect(_ names: [String]) throws -> [String:Any] {
         guard let s = debugger else { throw IDEError("Start a debug session first.") }
@@ -370,11 +375,11 @@ final class IDECore {
             }
             values.append(["name":name,"value":value.isEmpty ? output : value])
         }
-        return ["registers":values,"location":lastLocation,"tool":debugTool,"state":s.running ? "running" : "paused"]
+        return ["registers":values,"location":lastLocation,"tool":debugTool,"state":s.running ? "running" : "paused","breakpoints":breakpoints]
     }
     func debugAction(_ action: String, names: [String]) throws -> [String:Any] {
         guard let s = debugger else { throw IDEError("Start a debug session first.") }
-        if action == "stop" { s.stop(); debugger = nil; lastLocation = [:]; breakpoints = []; onEvent("debugState",["state":"disconnected"]); return ["state":"disconnected"] }
+        if action == "stop" { s.stop(); debugger = nil; lastLocation = [:]; clearBreakpointBindings(); onEvent("debugState",["state":"disconnected"]); return ["state":"disconnected","breakpoints":breakpoints] }
         guard ["stepi","step","next","continue","halt","reset"].contains(action) else { throw IDEError("Unknown debug action.") }
         if action != "halt" && s.running { throw IDEError("Pause the target first.") }
         if action == "continue" { s.running = true }
@@ -384,16 +389,27 @@ final class IDECore {
         if s.running { onEvent("debugState",["state":"running","tool":debugTool]); return ["state":"running"] }
         onEvent("debugState",["state":"paused","tool":debugTool]); return try inspect(names)
     }
+    private func clearBreakpointBindings() {
+        for i in breakpoints.indices { breakpoints[i].removeValue(forKey:"id") }
+    }
+    private func installBreakpoint(_ s: MDBSession, path: String, line: Int) throws -> Int {
+        let result = try s.checked("break \(quoteMDB(path+":"+String(line)))")
+        guard let m = match(result,"(?i)Breakpoint\\s+(\\d+)\\s+at"), let id = Int(m[1]) else {
+            throw IDEError("Cannot set a breakpoint at \(URL(fileURLWithPath:path).lastPathComponent):\(line). Choose an executable instruction, or click this breakpoint to remove it.\n"+result)
+        }
+        return id
+    }
     func breakpoint(path: String, line: Int) throws -> [String:Any] {
-        guard let s = debugger, !s.running else { throw IDEError("Start or pause a debug session to change breakpoints.") }
+        guard debugger?.running != true else { throw IDEError("Pause the target before changing breakpoints.") }
         let p = try requireProject(); _ = try p.allowed(path)
         guard line > 0 else { throw IDEError("Invalid line number.") }
-        if let i = breakpoints.firstIndex(where:{$0["path"] as? String == path && $0["line"] as? Int == line}), let id = breakpoints[i]["id"] as? Int {
-            _ = try s.checked("delete \(id)"); breakpoints.remove(at:i)
+        if let i = breakpoints.firstIndex(where:{$0["path"] as? String == path && $0["line"] as? Int == line}) {
+            if let s = debugger, let id = breakpoints[i]["id"] as? Int { _ = try s.checked("delete \(id)") }
+            breakpoints.remove(at:i)
         } else {
-            let result = try s.checked("break \(quoteMDB(path+":"+String(line)))")
-            guard let m = match(result,"(?i)Breakpoint\\s+(\\d+)\\s+at"), let id = Int(m[1]) else { throw IDEError("No executable instruction at this line.\n"+result) }
-            breakpoints.append(["id":id,"path":path,"line":line])
+            var point: [String:Any] = ["path":path,"line":line]
+            if let s = debugger { point["id"] = try installBreakpoint(s,path:path,line:line) }
+            breakpoints.append(point)
         }
         return ["breakpoints":breakpoints]
     }

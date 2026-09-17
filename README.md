@@ -25,7 +25,7 @@ The app is locally signed but is not Apple Developer ID signed or notarized, so 
 2. Edit your assembly source. **⌘S** saves; **⌘B** builds. Clicking a compiler problem opens its source line.
 3. Select **Simulator** and click **Start debugging**. Aster saves open edits, builds a debug ELF, loads it into Microchip's real simulator, and pauses at reset.
 4. Use **F11** to step an instruction, **F10** to step over, and **F5** to continue or pause. **Shift–F5** stops the session. The toolbar has the same controls.
-5. Click the gutter beside a source line while paused to add or remove a breakpoint. Click a watch value to edit one byte of target RAM.
+5. Click a line number or the margin to its left to add or remove a breakpoint. A red dot appears immediately. Set breakpoints before starting debugging or while paused, then press **Continue (F5)** to run to them. Breakpoints stay selected when you stop and restart the session. Click a watch value to edit one byte of target RAM.
 
 **New project** offers an Assembly starter and an Interrupt bench. Both use normal MPLAB project metadata and the course's reset/high-priority/low-priority vector placements.
 

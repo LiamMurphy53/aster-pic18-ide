@@ -15,8 +15,10 @@ import Foundation
             func line(_ text: String) -> Int { source.components(separatedBy:"\n").firstIndex{$0.contains(text)}!+1 }
             _ = try core.open(dest.path)
             core.onEvent = {name,data in if name == "debugStopped" { print("STOP \(jsonString(data))") } }
-            _ = try core.startDebug(tool:"SIM")
             _ = try core.breakpoint(path:path,line:line("nop     ; idle loop"))
+            try check("Queues a breakpoint before debugging",core.breakpoints.count == 1 && core.breakpoints[0]["id"] == nil)
+            _ = try core.startDebug(tool:"SIM")
+            try check("Installs queued breakpoint in simulator",core.breakpoints[0]["id"] as? Int != nil)
             _ = try core.debugAction("continue",names:["WREG"])
             Thread.sleep(forTimeInterval:0.3)
             try check("Stops after interrupt initialization",core.lastLocation["line"] as? Int == line("nop     ; idle loop"))
@@ -42,6 +44,12 @@ import Foundation
             Thread.sleep(forTimeInterval:0.4)
             if core.debugger?.running == true { _ = try core.debugAction("halt",names:[]) }
             try check("RB0 rising edge triggers external INT0",core.lastLocation["line"] as? Int == line("incf    irq_count"))
+            _ = try core.debugAction("stop",names:[])
+            try check("Keeps breakpoint after stopping with no stale debugger ID",core.breakpoints.count == 1 && core.breakpoints[0]["id"] == nil)
+            _ = try core.startDebug(tool:"SIM")
+            try check("Reinstalls breakpoint on restart",core.breakpoints[0]["id"] as? Int != nil)
+            _ = try core.breakpoint(path:path,line:line("incf    irq_count"))
+            try check("Removes reinstalled breakpoint",core.breakpoints.isEmpty)
             _ = try core.debugAction("stop",names:[])
             print("ALL \(checks.count) INTERRUPT CHECKS PASSED")
         } catch { print("ERROR \(error.localizedDescription)"); checks.append(["name":"Unexpected error","ok":false,"error":error.localizedDescription]); throw error }

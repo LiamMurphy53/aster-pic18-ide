@@ -21,35 +21,39 @@ const asm=StreamLanguage.define({startState:()=>({comment:false}),token(stream,s
   stream.next();return null;
 },languageData:{commentTokens:{line:';'}}});
 const theme=EditorView.theme({
- '&':{height:'100%',color:'#d6dde7',backgroundColor:'#10151c',fontSize:'13px'},
+ '&':{height:'100%',color:'#e5edf5',backgroundColor:'#202936',fontSize:'13px'},
  '.cm-content':{fontFamily:'"SFMono-Regular", Menlo, monospace',padding:'18px 0',caretColor:'#89e8c5'},
  '.cm-line':{padding:'0 22px 0 8px',lineHeight:'1.75'},
  '.cm-scroller':{fontFamily:'"SFMono-Regular", Menlo, monospace',overflow:'auto'},
- '.cm-gutters':{backgroundColor:'#10151c',color:'#536171',border:'none',padding:'0 0 0 10px'},
+ '.cm-gutters':{backgroundColor:'#202936',color:'#9dafc2',border:'none',padding:'0 0 0 10px'},
  '.cm-lineNumbers .cm-gutterElement':{minWidth:'35px',padding:'0 8px'},
- '.cm-activeLine,.cm-activeLineGutter':{backgroundColor:'#ffffff04'},
- '&.cm-focused .cm-selectionBackground,.cm-selectionBackground':{backgroundColor:'#6fa68e35'},
+ '.cm-activeLine,.cm-activeLineGutter':{backgroundColor:'#ffffff0b'},
+ '&.cm-focused .cm-selectionBackground,.cm-selectionBackground':{backgroundColor:'#83c8ad48'},
  '.cm-cursor':{borderLeftColor:'#9eebc9'},
- '.cm-panels':{backgroundColor:'#19222c',color:'#dae3ef'},
- '.cm-textfield':{backgroundColor:'#10151c',border:'1px solid #354450',borderRadius:'4px'},
- '.cm-button':{backgroundImage:'none',backgroundColor:'#24313a',color:'#d8e1eb',border:'1px solid #354450'},
- '.cm-tooltip':{backgroundColor:'#1a2430',border:'1px solid #354450',borderRadius:'6px'},
+ '.cm-panels':{backgroundColor:'#2b3849',color:'#dae3ef'},
+ '.cm-textfield':{backgroundColor:'#202936',border:'1px solid #53677b',borderRadius:'4px'},
+ '.cm-button':{backgroundImage:'none',backgroundColor:'#3b4c5f',color:'#d8e1eb',border:'1px solid #53677b'},
+ '.cm-tooltip':{backgroundColor:'#2b3849',border:'1px solid #53677b',borderRadius:'6px'},
  '.cm-tooltip-autocomplete > ul > li[aria-selected]':{backgroundColor:'#2d5047',color:'#baf4df'},
  '.cm-breakpoint':{color:'#ef817f',fontSize:'10px',width:'14px',textAlign:'center'},
- '.cm-breakpoint-gutter':{width:'16px',cursor:'pointer'},
+ '.cm-breakpoint-gutter':{width:'22px',cursor:'pointer'},
+ '.cm-breakpoint-gutter .cm-gutterElement':{width:'22px',textAlign:'center'},
+ '.cm-breakpoint-gutter .cm-gutterElement:hover':{backgroundColor:'#ef817f28'},
+ '.cm-lineNumbers':{cursor:'pointer'},
  '.cm-execution':{backgroundColor:'#89e8c516',boxShadow:'inset 2px 0 #89e8c5'},
  '.cm-problem-line':{backgroundColor:'#e6746b0c'},
  '.cm-foldGutter':{width:'12px'},
  '&.cm-focused':{outline:'none'},
 },{dark:true});
-const syntax=HighlightStyle.define([{tag:tags.keyword,color:'#9bc8fa'},{tag:tags.meta,color:'#c7adf3'},{tag:tags.comment,color:'#697d80'},{tag:tags.number,color:'#efc78c'},{tag:tags.string,color:'#a9d9a6'},{tag:tags.variableName,color:'#d4e1ea'},{tag:tags.labelName,color:'#8ee0c3'}]);
-class Dot extends GutterMarker{toDOM(){let e=document.createElement('span');e.className='cm-breakpoint';e.textContent='●';return e;}}
+const syntax=HighlightStyle.define([{tag:tags.keyword,color:'#9bc8fa'},{tag:tags.meta,color:'#c7adf3'},{tag:tags.comment,color:'#9eafb2'},{tag:tags.number,color:'#efc78c'},{tag:tags.string,color:'#a9d9a6'},{tag:tags.variableName,color:'#d4e1ea'},{tag:tags.labelName,color:'#8ee0c3'}]);
+class Dot extends GutterMarker{toDOM(){let e=document.createElement('span');e.className='cm-breakpoint';e.textContent='●';e.title='Breakpoint — click to remove';return e;}}
 const dot=new Dot(),setMarks=StateEffect.define();
 const marks=StateField.define({create:()=>({breaks:[],execution:0,errors:[]}),update(v,tr){for(const e of tr.effects)if(e.is(setMarks))return e.value;return v;}});
 const decorations=EditorView.decorations.compute([marks],state=>{const m=state.field(marks),all=[];if(m.execution>0&&m.execution<=state.doc.lines)all.push(Decoration.line({class:'cm-execution'}).range(state.doc.line(m.execution).from));for(const n of m.errors)if(n>0&&n<=state.doc.lines)all.push(Decoration.line({class:'cm-problem-line'}).range(state.doc.line(n).from));return Decoration.set(all,true);});
 let view,activePath='',states=new Map(),device=[],callbacks={},readonly=new Compartment(),language=new Compartment();
 function completions(ctx){const word=ctx.matchBefore(/[\w.]+/);if(!word||(word.from===word.to&&!ctx.explicit))return null;return {from:word.from,options:[...instructions.map(label=>({label,type:'keyword',detail:'PIC18 instruction'})),...directives.map(label=>({label,type:'keyword',detail:'pic-as directive'})),...device.map(r=>({label:r.name,type:'variable',detail:r.address,info:r.description||r.bits.join(' · ')}))]};}
-function makeState(content,path,readOnly){return EditorState.create({doc:content,extensions:[lineNumbers(),highlightActiveLineGutter(),history(),drawSelection(),rectangularSelection(),crosshairCursor(),highlightActiveLine(),highlightSelectionMatches(),indentOnInput(),bracketMatching(),closeBrackets(),foldGutter(),language.of(/\.(c|h|cpp)$/.test(path)?cpp():asm),theme,syntaxHighlighting(syntax),readonly.of(EditorState.readOnly.of(readOnly)),autocompletion({override:[completions]}),keymap.of([{key:'Mod-s',run:()=>{callbacks.save?.();return true;}},...closeBracketsKeymap,...defaultKeymap,...searchKeymap,...historyKeymap,...completionKeymap,...foldKeymap,indentWithTab]),EditorState.tabSize.of(4),marks,decorations,gutter({class:'cm-breakpoint-gutter',lineMarker:(v,line)=>v.state.field(marks).breaks.includes(v.state.doc.lineAt(line.from).number)?dot:null,domEventHandlers:{mousedown:(v,line,event)=>{event.preventDefault();callbacks.breakpoint?.(activePath,v.state.doc.lineAt(line.from).number);return true;}}}),EditorView.updateListener.of(update=>{if(update.docChanged)callbacks.change?.(activePath,update.state.doc.toString());if(update.selectionSet||update.docChanged){const pos=update.state.selection.main.head,line=update.state.doc.lineAt(pos);callbacks.cursor?.(line.number,pos-line.from+1);}})]});}
+function breakpointClick(v,line,event){if(event.button!==0||!activePath)return false;event.preventDefault();callbacks.breakpoint?.(activePath,v.state.doc.lineAt(line.from).number);return true;}
+function makeState(content,path,readOnly){return EditorState.create({doc:content,extensions:[gutter({class:'cm-breakpoint-gutter',renderEmptyElements:true,lineMarker:(v,line)=>v.state.field(marks).breaks.includes(v.state.doc.lineAt(line.from).number)?dot:null,lineMarkerChange:update=>update.startState.field(marks)!==update.state.field(marks),domEventHandlers:{mousedown:breakpointClick}}),lineNumbers({domEventHandlers:{mousedown:breakpointClick}}),highlightActiveLineGutter(),history(),drawSelection(),rectangularSelection(),crosshairCursor(),highlightActiveLine(),highlightSelectionMatches(),indentOnInput(),bracketMatching(),closeBrackets(),foldGutter(),language.of(/\.(c|h|cpp)$/.test(path)?cpp():asm),theme,syntaxHighlighting(syntax),readonly.of(EditorState.readOnly.of(readOnly)),autocompletion({override:[completions]}),keymap.of([{key:'Mod-s',run:()=>{callbacks.save?.();return true;}},...closeBracketsKeymap,...defaultKeymap,...searchKeymap,...historyKeymap,...completionKeymap,...foldKeymap,indentWithTab]),EditorState.tabSize.of(4),marks,decorations,EditorView.updateListener.of(update=>{if(update.docChanged)callbacks.change?.(activePath,update.state.doc.toString());if(update.selectionSet||update.docChanged){const pos=update.state.selection.main.head,line=update.state.doc.lineAt(pos);callbacks.cursor?.(line.number,pos-line.from+1);}})]});}
 window.AsterEditor={
  init(parent,options){callbacks=options;view=new EditorView({parent,state:makeState('','',true)});},
  setDevice(regs){device=regs;},

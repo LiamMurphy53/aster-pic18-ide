@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if #available(macOS 13.3, *) { web.isInspectable = true }
         window = NSWindow(contentRect:NSRect(x:0,y:0,width:1440,height:930),styleMask:[.titled,.closable,.miniaturizable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
         window.title = "Aster — PIC18 workspace"; window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true
-        window.backgroundColor = NSColor(calibratedRed:0.043,green:0.055,blue:0.075,alpha:1)
+        window.backgroundColor = NSColor(calibratedRed:0.098,green:0.133,blue:0.180,alpha:1)
         window.minSize = NSSize(width:1000,height:700); window.contentView = web; window.delegate = self
         window.setFrameAutosaveName("AsterMainWindow"); window.center()
         window.appearance = NSAppearance(named:.darkAqua)
