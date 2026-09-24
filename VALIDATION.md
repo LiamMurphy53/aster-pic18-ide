@@ -24,3 +24,17 @@ The backend integration suite, interrupt suite, serial test, and native UI check
 ## Breakpoint fix validation — September 17, 2026
 
 All 10 interrupt/backend checks and 16 native UI checks passed. Regression coverage now includes real gutter mouse events on line numbers and the left margin, immediate marker addition/removal, breakpoints set before debugging, stopping at a clicked breakpoint, retaining/reinstalling breakpoints across sessions, INT0 flag injection, and an RB0 rising edge. UI checks used isolated sample projects; the active user session was left running. Physical hardware was not exercised.
+
+## Stopwatch validation — September 17, 2026
+
+All 22 stopwatch simulator checks and 19 native UI checks passed. Timing checks cover NOP, MOVLW, MOVWF, DECF, both BNZ outcomes, RCALL, RETURN, and GOTO; cumulative stepping; continuing to a breakpoint; excluding paused time; reset without moving the CPU; session reset; and 15 instruction cycles taking 7.5 µs at 8 MHz Fosc, matching MDB’s own elapsed-time report. Native UI checks verify visible counts, clock locking during a session, and the stopwatch Reset button. Physical hardware timing is not supported.
+
+## Stopwatch clock and interval correction — September 17, 2026
+
+All 29 stopwatch checks and 20 native UI checks passed. The simulator frequency is now imported from the selected MPLAB configuration, with its instruction-clock units converted to equivalent PIC18 Fosc. Continue resets the measurement by default; cumulative timing is an explicit option. Aster displays MDB’s reported elapsed time directly. Regression checks cover clock import, accumulated steps, and excluding previous runs from breakpoint-to-breakpoint measurements. A separate check on a temporary copy of the current local lab code reproduced both supplied reference readings exactly: 14 cycles / 3.5 µs, then 3,979,672 cycles / 994.918 ms at a 4 MHz instruction clock (16 MHz Fosc). The lab source was not modified or included in the repository.
+
+## Programming confirmation correction — September 23, 2026
+
+MDB 6.20 uses a bare `>` for both its device-confirmation input and its next-command prompt. Aster previously sent the programming command as the answer to the device warning. The session now distinguishes confirmation prompts, obtains a native dialog response, and waits for the actual command completion before continuing. Both production programming and hardware debugging use this handling; warnings are not automatically accepted.
+
+All 14 programming protocol checks, 21 real simulator/build integration checks, and 29 stopwatch checks passed. The native app also built successfully. The protocol tests use a separate fake MDB process, covering the observed warning split at every text boundary, repeated confirmations, user response time excluded from timeout, command ordering, cancellation, embedded greater-than signs, programming failure, and missing completion. These tests do not flash a physical board; a successful upload on the user's PICkit remains to be confirmed.

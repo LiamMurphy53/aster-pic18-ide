@@ -27,6 +27,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         window.appearance = NSAppearance(named:.darkAqua)
         menu()
         core.onEvent = { [weak self] name,value in self?.event(name,value) }
+        core.onConfirmation = { [weak self] message in
+            // MDB runs on the operation queue; keep the window responsive while
+            // its command waits for the user's answer on the main queue.
+            let answer = DispatchSemaphore(value:0)
+            var accepted = false
+            DispatchQueue.main.async {
+                guard let self else { answer.signal(); return }
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "Confirm the connected device"
+                alert.informativeText = message
+                alert.addButton(withTitle:"Continue")
+                alert.addButton(withTitle:"Cancel")
+                alert.beginSheetModal(for:self.window) { response in
+                    accepted = response == .alertFirstButtonReturn
+                    answer.signal()
+                }
+            }
+            answer.wait()
+            return accepted
+        }
         core.serial.onData = { [weak self] text in self?.event("serialData",text) }
         web.loadFileURL(resources.appendingPathComponent("Web/index.html"),allowingReadAccessTo:resources)
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
@@ -130,8 +151,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         case "clean":
             _ = try core.build(clean:true); return try core.build(clean:true,debug:true)
         case "regenerate": return try core.regenerate()
-        case "debugStart": return try core.startDebug(tool:str("tool","SIM"),index:int("index"))
+        case "debugStart": return try core.startDebug(tool:str("tool","SIM"),index:int("index"),clockMHz:args["clockMHz"] as? Double,accumulateStopwatch:args["accumulateStopwatch"] as? Bool ?? false)
         case "debugAction": return try core.debugAction(str("action"),names:args["names"] as? [String] ?? ["WREG","STATUS","BSR"])
+        case "resetStopwatch": return try core.resetStopwatch()
         case "inspect": return try core.inspect(args["names"] as? [String] ?? [])
         case "breakpoint": return try core.breakpoint(path:str("path"),line:int("line",1))
         case "memory": return try core.memory(type:str("type","r"),address:str("address","0x0"),count:int("count",64),format:str("format","xb"))

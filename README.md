@@ -29,6 +29,12 @@ The app is locally signed but is not Apple Developer ID signed or notarized, so 
 
 **New project** offers an Assembly starter and an Interrupt bench. Both use normal MPLAB project metadata and the course's reset/high-priority/low-priority vector placements.
 
+## Debug stopwatch
+
+The Debug Inspector shows the simulator's instruction-cycle count and elapsed-time reading. Aster imports the selected MPLAB configuration's simulator clock automatically. **Clock (Fosc)** displays the equivalent oscillator frequency: a 4 MHz instruction clock is 16 MHz Fosc on PIC18. You can override Fosc before starting; opening a project or switching configuration restores that project's clock. Older global clock overrides are ignored.
+
+By default, the stopwatch resets on each Continue, matching MPLAB's normal stopwatch behavior. Pause at your starting breakpoint, then continue to the ending breakpoint to measure only that interval. Individual steps accumulate within the current run. Enable **Accumulate across runs** before starting a session if you want a cumulative measurement instead. The stopwatch **Reset** clears the measurement without moving the CPU. Paused time is excluded, and the reading refreshes at each stop. Stopwatch timing is available with Simulator only.
+
 ## Interrupt debugging
 
 The **Pause** button stops a running target, including an infinite loop. It preserves the session for register, memory, and source inspection.
@@ -58,6 +64,8 @@ The panel can raise INT0, INT1, INT2, Timer0, Timer1, Timer2, or ADC flags. Firm
 Select PICkit 3 as the debug target, use **Detect tools**, and choose its reported index. The board must have its own power. Aster explicitly disables power supplied by PICkit before connecting.
 
 The upload button builds a production image and programs it through MPLAB 6.20's MDB. Aster reports success only when MDB confirms it. Hardware debugging similarly loads the debug ELF through PICkit 3. These connections still require testing with your physical board and probe; simulator success is not a hardware validation.
+
+When MDB asks you to confirm the attached device and voltage, Aster displays the warning in a native dialog. Check your connected board before choosing **Continue**. Aster waits for that answer and for the connection to finish before sending the programming command. **Cancel** closes the programmer session. The time you spend reading the confirmation does not count toward the connection timeout.
 
 MPLAB 6.20's generated PIC-AS build flags for this exact device are used. The C compiler's `-mdebugger` option is not passed to PIC-AS, which does not support it. The installed reserved-resource table identifies TOS registers, two stack levels, and programming pins as debug resources for this device.
 

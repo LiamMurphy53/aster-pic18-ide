@@ -80,7 +80,7 @@ final class PICProject {
         configurations = nodes.compactMap { node in
             guard let el = node as? XMLElement else { return nil }
             func value(_ path: String) -> String { (try? el.nodes(forXPath:path).first?.stringValue) ?? "" }
-            return ["name":el.attribute(forName:"name")?.stringValue ?? "default", "device":value("toolsSet/targetDevice"), "compiler":value("toolsSet/languageToolchain"), "version":value("toolsSet/languageToolchainVersion"), "tool":value("toolsSet/platformTool")]
+            return ["name":el.attribute(forName:"name")?.stringValue ?? "default", "device":value("toolsSet/targetDevice"), "compiler":value("toolsSet/languageToolchain"), "version":value("toolsSet/languageToolchainVersion"), "tool":value("toolsSet/platformTool"),"instructionFrequency":value("Simulator/property[@key='oscillator.frequency']/@value"),"instructionFrequencyUnit":value("Simulator/property[@key='oscillator.frequencyunit']/@value")]
         }
         if let first = configurations.first { configuration = first["name"] ?? "default" }
         guard configurations.contains(where:{$0["device"]?.uppercased() == "PIC18F87K22"}) else { throw IDEError("This version of Aster supports PIC18F87K22 projects.") }
@@ -166,8 +166,43 @@ final class PICProject {
         }
         return candidates.compactMapValues { $0.count == 1 ? $0.first : nil }
     }
+    var simulatorClockMHz: Double {
+        guard let conf = configurations.first(where:{$0["name"] == configuration}),
+              let frequency = Double(conf["instructionFrequency"] ?? "") else { return 4 }
+        let units: [String:Double] = ["Mega":1.0,"Kilo":0.001,"None":0.000001]
+        let scale: Double = units[conf["instructionFrequencyUnit"] ?? "Mega"] ?? 1.0
+        // MPLAB's Simulator oscillator.frequency is the instruction clock, not Fosc.
+        let fosc = frequency * scale * 4
+        return fosc.isFinite && (0.001...64).contains(fosc) ? fosc : 4
+    }
     func info() -> [String:Any] {
-        ["name":prebuilt?.lastPathComponent ?? name,"path":root.path,"configuration":configuration,"configurations":configurations,"prebuilt":prebuilt != nil,"files":files.map { ["name":$0.lastPathComponent,"path":$0.path,"relative":$0.path.hasPrefix(root.path+"/") ? String($0.path.dropFirst(root.path.count+1)) : $0.path,"exists":FileManager.default.fileExists(atPath:$0.path)] },"outputs":outputs()]
+        ["clockMHz":simulatorClockMHz,"name":prebuilt?.lastPathComponent ?? name,"path":root.path,"configuration":configuration,"configurations":configurations,"prebuilt":prebuilt != nil,"files":files.map { ["name":$0.lastPathComponent,"path":$0.path,"relative":$0.path.hasPrefix(root.path+"/") ? String($0.path.dropFirst(root.path.count+1)) : $0.path,"exists":FileManager.default.fileExists(atPath:$0.path)] },"outputs":outputs()]
+    }
+}
+
+// MDB uses the same bare prompt for its command reader and its dialog reader.
+// Keep text across pipe chunks so a dialog cannot consume the next command.
+struct MDBPromptReader {
+    enum Prompt { case ready, confirmation(String) }
+    private var text = ""
+    private var lineStart = true
+    mutating func reset() { text = ""; lineStart = true }
+    mutating func receive(_ chunk: String) -> [Prompt] {
+        var result: [Prompt] = []
+        for character in chunk {
+            if character == ">", lineStart {
+                let message = text.trimmingCharacters(in:.whitespacesAndNewlines)
+                let question = message.components(separatedBy:.newlines).last ?? ""
+                let isConfirmation = question.hasSuffix("?") || match(question,"(?i)\\[yes/no(?:/cancel)?\\]\\s*$") != nil
+                result.append(isConfirmation ? .confirmation(message) : .ready)
+                reset()
+            } else {
+                text.append(character)
+                if character.isNewline { lineStart = true }
+                else if character != " " && character != "\t" { lineStart = false }
+            }
+        }
+        return result
     }
 }
 
@@ -179,15 +214,19 @@ final class MDBSession {
     private var input: Pipe?
     private var buffer = ""
     private var prompts = 0
+    private var promptReader = MDBPromptReader()
+    private var confirmations: [String] = []
     var onOutput: (String)->Void = {_ in}
     var onStop: ([String:Any])->Void = {_ in}
+    var onConfirmation: (String)->Bool = {_ in false}
     var running = false
     private var locationBuffer = ""
     init(_ tc: Toolchain) { self.tc = tc }
-    func start() throws {
+    // Optional launch overrides allow protocol tests without connecting hardware.
+    func start(executable: URL? = nil, arguments: [String]? = nil) throws {
         let p = Process(), stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
-        p.executableURL = URL(fileURLWithPath:tc.java)
-        p.arguments = ["-Dfile.encoding=UTF-8","-Djava.awt.headless=true","-jar",tc.platform+"/lib/mdb.jar"]
+        p.executableURL = executable ?? URL(fileURLWithPath:tc.java)
+        p.arguments = arguments ?? ["-Dfile.encoding=UTF-8","-Djava.awt.headless=true","-jar",tc.platform+"/lib/mdb.jar"]
         p.environment = tc.environment; p.standardInput = stdin; p.standardOutput = stdout; p.standardError = stderr
         process = p; input = stdin
         stdout.fileHandleForReading.readabilityHandler = { [weak self] h in
@@ -208,8 +247,12 @@ final class MDBSession {
     private func receive(_ s: String) {
         condition.lock()
         buffer += s
-        // In pipe mode JLine uses a bare '>' without a trailing newline.
-        prompts += s.filter { $0 == ">" }.count
+        for prompt in promptReader.receive(s) {
+            switch prompt {
+            case .ready: prompts += 1
+            case .confirmation(let message): confirmations.append(message)
+            }
+        }
         locationBuffer += s
         if locationBuffer.count > 14000 { locationBuffer = String(locationBuffer.suffix(14000)) }
         var stop: [String:Any]?
@@ -225,10 +268,28 @@ final class MDBSession {
         commandLock.lock(); defer { commandLock.unlock() }
         condition.lock()
         guard let p = process, p.isRunning, let input else { condition.unlock(); throw IDEError("Start a debug session first.") }
-        let count = prompts; buffer = ""
+        let count = prompts; buffer = ""; promptReader.reset()
         do { try input.fileHandleForWriting.write(contentsOf:Data((line+"\n").utf8)) } catch { condition.unlock(); throw error }
-        let deadline = Date().addingTimeInterval(timeout)
+        var deadline = Date().addingTimeInterval(timeout)
         while prompts == count && p.isRunning {
+            if !confirmations.isEmpty {
+                let message = confirmations.removeFirst()
+                condition.unlock()
+                let accepted = onConfirmation(message)
+                condition.lock()
+                guard accepted else {
+                    condition.unlock(); stop()
+                    throw IDEError("Device operation cancelled at the confirmation. The programmer session was closed.")
+                }
+                guard p.isRunning, process === p else {
+                    condition.unlock(); throw IDEError("MDB closed while waiting for confirmation.")
+                }
+                do { try input.fileHandleForWriting.write(contentsOf:Data("yes\n".utf8)) }
+                catch { condition.unlock(); stop(); throw error }
+                // Time spent reading the dialog is not a tool timeout.
+                deadline = Date().addingTimeInterval(timeout)
+                continue
+            }
             if !condition.wait(until:deadline) { condition.unlock(); stop(); throw IDEError("MDB timed out on ‘\(line)’. The session was closed so commands cannot get out of sync.") }
         }
         let result = buffer; condition.unlock()
@@ -287,7 +348,10 @@ final class IDECore {
     let runner = CommandRunner()
     let serial = SerialConnection()
     var onEvent: (String,Any)->Void = {_,_ in}
+    var onConfirmation: (String)->Bool = {_ in false}
     var debugTool = "SIM"
+    var simulatorClockMHz = 4.0
+    var stopwatchAccumulates = false
     var lastLocation: [String:Any] = [:]
     var lastBuild: [String:Any] = [:]
     var breakpoints: [[String:Any]] = []
@@ -332,13 +396,18 @@ final class IDECore {
     }
     func newSession() throws -> MDBSession {
         let s = MDBSession(tc)
+        s.onConfirmation = { self.onConfirmation($0) }
         s.onOutput = { self.onEvent("debugOutput",$0) }
         s.onStop = { location in self.lastLocation = location; self.onEvent("debugStopped",location) }
         try s.start(); return s
     }
-    func startDebug(tool: String, index: Int = 0) throws -> [String:Any] {
+    func startDebug(tool: String, index: Int = 0, clockMHz: Double? = nil, accumulateStopwatch: Bool = false) throws -> [String:Any] {
         guard ["SIM","PICkit3"].contains(tool), index >= 0 else { throw IDEError("Choose Simulator or PICkit 3.") }
         let p = try requireProject()
+        let clockMHz = clockMHz ?? p.simulatorClockMHz
+        guard clockMHz.isFinite, (0.001...64).contains(clockMHz) else { throw IDEError("Enter an oscillator frequency from 0.001 to 64 MHz.") }
+        simulatorClockMHz = clockMHz
+        stopwatchAccumulates = accumulateStopwatch
         debugger?.stop(); debugger = nil
         if p.prebuilt == nil { let b = try build(debug:true,tool:tool); guard b["ok"] as? Bool == true else { throw IDEError("Fix the build errors before starting the debugger.") } }
         let elf = try p.artifact("elf",image:"debug")
@@ -347,11 +416,17 @@ final class IDECore {
         let s = try newSession(); debugger = s; debugTool = tool; lastLocation = [:]
         do {
             _ = try s.checked("device PIC18F87K22")
+            if tool == "SIM" {
+                // MDB expects instruction frequency; PIC18 instruction clock is Fosc / 4.
+                _ = try s.checked("set oscillator.frequency \(clockMHz / 4)")
+                _ = try s.checked("set oscillator.frequencyunit Mega")
+            }
             if tool == "PICkit3" { _ = try s.checked("set poweroptions.powerenable false") }
             _ = try s.checked("hwtool \(tool)\(tool == "SIM" ? "" : " \(index)")",timeout:60)
             let result = try s.checked("program \(quoteMDB(elf.path))",timeout:90)
             guard result.lowercased().contains("program succeeded") else { throw IDEError("MDB did not confirm that the image loaded.\n"+result) }
             _ = try s.checked("reset")
+            if tool == "SIM" { _ = try s.checked(accumulateStopwatch ? "stopwatch nror" : "stopwatch ror"); _ = try s.checked("stopwatch clear") }
             for i in breakpoints.indices {
                 let path = breakpoints[i]["path"] as! String, line = breakpoints[i]["line"] as! Int
                 breakpoints[i]["id"] = try installBreakpoint(s,path:path,line:line)
@@ -375,7 +450,7 @@ final class IDECore {
             }
             values.append(["name":name,"value":value.isEmpty ? output : value])
         }
-        return ["registers":values,"location":lastLocation,"tool":debugTool,"state":s.running ? "running" : "paused","breakpoints":breakpoints]
+        return ["registers":values,"location":lastLocation,"tool":debugTool,"state":s.running ? "running" : "paused","breakpoints":breakpoints,"stopwatch":stopwatchReading()]
     }
     func debugAction(_ action: String, names: [String]) throws -> [String:Any] {
         guard let s = debugger else { throw IDEError("Start a debug session first.") }
@@ -385,9 +460,29 @@ final class IDECore {
         if action == "continue" { s.running = true }
         do { _ = try s.checked(action) } catch { s.running = false; throw error }
         if action == "halt" || action == "reset" { s.running = false }
-        if action == "reset" { lastLocation = ["address":"0x0000"] }
+        if action == "reset" { lastLocation = ["address":"0x0000"]; if debugTool == "SIM" { _ = try s.checked("stopwatch clear") } }
         if s.running { onEvent("debugState",["state":"running","tool":debugTool]); return ["state":"running"] }
         onEvent("debugState",["state":"paused","tool":debugTool]); return try inspect(names)
+    }
+    func stopwatchReading() -> [String:Any] {
+        guard let s = debugger, debugTool == "SIM", !s.running else { return ["available":false] }
+        do {
+            let output = try s.checked("stopwatch")
+            guard let digits = match(output,"(?i)cycle count\\s*=\\s*([0-9]+)")?[1], let cycles = UInt64(digits) else {
+                throw IDEError("The simulator did not return a cycle count.")
+            }
+            guard let elapsed = match(output,"\\(([0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)\\s*(ns|us|µs|μs|ms|s)\\)"),
+                  let value = Double(elapsed[1]),
+                  let scale = ["ns":1e-9,"us":1e-6,"µs":1e-6,"μs":1e-6,"ms":1e-3,"s":1.0][elapsed[2]] else {
+                throw IDEError("The simulator did not return an elapsed time.")
+            }
+            return ["available":true,"cycles":String(cycles),"seconds":value*scale,"elapsedText":elapsed[1]+" "+elapsed[2],"clockMHz":simulatorClockMHz,"accumulate":stopwatchAccumulates]
+        } catch { return ["available":false,"error":error.localizedDescription] }
+    }
+    func resetStopwatch() throws -> [String:Any] {
+        guard let s = debugger, debugTool == "SIM", !s.running else { throw IDEError("Pause the simulator before resetting the stopwatch.") }
+        _ = try s.checked("stopwatch clear")
+        return stopwatchReading()
     }
     private func clearBreakpointBindings() {
         for i in breakpoints.indices { breakpoints[i].removeValue(forKey:"id") }
