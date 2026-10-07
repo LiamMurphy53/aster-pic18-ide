@@ -16,3 +16,5 @@ Tests/*.log
 Examples/*/build/
 Examples/*/dist/
 **/nbproject/private/
+
+Windows/assets/

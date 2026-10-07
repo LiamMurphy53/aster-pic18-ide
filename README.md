@@ -1,23 +1,44 @@
 # Aster — PIC18 IDE
 
-A native Mac workspace for PIC18F87K22 assembly development, using MPLAB X 6.20 and XC8 / pic-as 2.46. Edit, build, simulate, inspect registers, and explore interrupts in one app.
+A desktop workspace for PIC18F87K22 assembly development, using MPLAB X 6.20 and XC8 / pic-as 2.46. Edit, build, simulate, inspect registers, and explore interrupts in one app. Available for **macOS** and **Windows**.
 
-**Launch:** open `build/Aster.app`. The app works locally and does not need a server, browser, or Node installation to run. Keep your existing Microchip installation.
+## Install Aster
 
-## Download and requirements
+Download an app from [GitHub Releases](https://github.com/LiamMurphy53/aster-pic18-ide/releases). Expand **Assets** under the newest release, including a Windows preview if marked **Pre-release**. The **Source code** ZIP and TAR files are for developers; use an application download below to install Aster.
 
-Once a release is published, download `Aster-PIC18-IDE-v0.1.0-macOS-universal.zip` from this repository's **Releases** section, unzip it, and open **Aster.app**. You can move it into Applications. The **Source code** archives contain the project, not a ready-to-run app.
+| Operating system | Download | Install |
+| --- | --- | --- |
+| macOS 13 or later, Apple Silicon or Intel | `Aster-PIC18-IDE-v0.1.0-macOS-universal.zip` | Unzip, move **Aster.app** to **Applications**, then open it. |
+| Windows 10 or 11, 64-bit Intel/AMD | `Aster-PIC18-IDE-v0.1.0-Windows-x64-Setup.exe` | Run the installer, choose your installation folder, and launch **Aster** from Start or the desktop shortcut. Administrator access is not required for the default per-user installation. |
+| Windows portable option | `Aster-PIC18-IDE-v0.1.0-Windows-x64.zip` | Extract the entire ZIP into a folder and run **Aster.exe** inside it. Keep its supporting files beside it. |
 
-- **macOS 13 or later.** The download contains Apple Silicon and Intel builds. Runtime verification has been performed on Apple Silicon; Intel has been cross-compiled but not run on a physical Intel Mac.
-- **Microchip MPLAB X 6.20**, including its MDB debugger, bundled Java runtime, and **PIC18F-K_DFP 1.13.292** device pack.
-- **XC8 / pic-as 2.46**, installed separately from Microchip. Compiler, debugger, Java, and device-pack binaries are not distributed with Aster.
-- **PIC18F87K22** projects. Other devices and toolchain versions are not currently validated.
+You do **not** need Node.js, Swift, Xcode, or a separate browser to run the downloaded app. Aster runs locally. Building and simulation additionally require the Microchip tools below. Windows ARM64 and 32-bit Windows do not have native builds.
 
-Install Microchip's tools first, then open Aster's **Toolchain settings** (⌘,). The defaults are `/Applications/microchip/mplabx/v6.20` and `/Applications/microchip/xc8/v2.46`. Adjust those directories if needed. For a different installation path or CPU architecture, use **Project → Regenerate Makefiles** before building the included examples or a new project; their generated local makefiles reflect the original development installation.
+The Mac download is locally signed but is not Developer ID signed or notarized; Windows downloads are not Authenticode signed. Your operating system may show an unknown-publisher warning. Follow [Apple's instructions for opening trusted apps](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac) on Mac. On Windows, a SmartScreen dialog may offer **More info → Run anyway** for a download you trust; a managed computer may require your administrator's approval.
 
-You can try the editor and device reference without a connected board. Building and simulation require the Microchip tools. Open `Examples/FirstLight.X` to try registers and stepping, or `Examples/InterruptBench.X` for interrupts. No hardware is needed for the simulator.
+**Windows preview status:** local checks cover the desktop shell, editor bridge, project file protection, and debugger command/confirmation handling. The included GitHub workflow builds the installer on Windows and checks packaged app startup; this must pass before a release is published. Real Microchip compilation and simulation on Windows, physical PICkit programming/debugging, and serial adapters still need bench validation. The Mac simulator has been tested on Apple Silicon; Intel is cross-compiled.
 
-The app is locally signed but is not Apple Developer ID signed or notarized, so macOS may block a downloaded copy. Building from source is an alternative. Only open software you trust; Apple's [instructions for opening an app from an unidentified developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac) explain the system's approval process.
+### Install the Microchip tools on either OS
+
+1. Install **[MPLAB X IDE 6.20](https://www.microchip.com/en-us/tools-resources/develop/mplab-x-ide)** for your operating system. Earlier versions are available from Microchip's download archive. Include the MDB debugger and bundled Java runtime.
+2. Install **[MPLAB XC8 2.46](https://www.microchip.com/en-us/tools-resources/develop/mplab-xc-compilers/xc8)** separately; Aster uses its **pic-as** assembler. Use the archived 2.46 installer if the current download is newer.
+3. In MPLAB X's pack manager, ensure **Microchip PIC18F-K_DFP 1.13.292** is installed. Aster currently targets **PIC18F87K22**; other devices and toolchain versions are not validated. Microchip compiler, Java, debugger, and device-pack binaries are not included in Aster.
+4. Open Aster and choose **Project → Toolchain Settings**. Select the installation roots, not a `bin` folder or an executable:
+
+   | Tool | Default macOS directory | Default Windows directory |
+   | --- | --- | --- |
+   | MPLAB X | `/Applications/microchip/mplabx/v6.20` | `C:\Program Files\Microchip\MPLABX\v6.20` |
+   | XC8 | `/Applications/microchip/xc8/v2.46` | `C:\Program Files\Microchip\xc8\v2.46` |
+
+   If installed elsewhere (including `Program Files (x86)`), enter that actual location. All five tool checks should report **FOUND**. Settings and recent projects are saved per user; Windows stores them under `%APPDATA%\Aster`.
+5. Choose **Open project**, select your MPLAB `.X` folder, then choose **Project → Regenerate Makefiles** before the first build on a different computer or operating system. This uses Microchip's generator to replace machine-specific paths in generated build files. The included templates and examples originally contain Mac paths; regeneration is required on Windows. Use **New project** to create a blank project, assembly starter, or interrupt bench.
+6. Click **Build**, select **Simulator**, then click **Start debugging**. No board is needed for simulation. A connected PICkit 3 and an externally powered board are needed for hardware programming/debugging.
+
+You can use the editor and device reference before installing Microchip's tools. Downloaded course PDFs are not bundled; put the named references in **Downloads**. The assembler manual comes from your XC8 installation.
+
+### Keyboard shortcuts
+
+Use **Command** on macOS and **Ctrl** on Windows: **S** saves, **B** builds, **O** opens a project, **K** finds a command or file, and **F** searches the editor. **F11** steps an instruction, **F10** steps over, **F5** continues/pauses, and **Shift+F5** stops debugging. The toolbar offers the same actions.
 
 ## Start working
 
@@ -83,6 +104,8 @@ This is a working first release for the course's PIC18F87K22 workflow. It includ
 
 ## Build from source
 
+### macOS
+
 Download the repository using **Code → Download ZIP** and unzip it, or clone it with Git. On a Mac with a current Swift compiler from Xcode or Command Line Tools, open Terminal in this directory and run:
 
 ```sh
@@ -100,9 +123,29 @@ The test sources in `Tests` exercise the actual compiler, debugger, project file
 
 With the exact Microchip toolchain above installed at the default paths, run `zsh Tests/run-tests.sh`. Set `ASTER_TEST_PROJECT` to the full path of an additional local `.X` project to test a temporary copy of it; personal projects are not included. Test output and generated project copies are ignored by Git.
 
+### Windows
+
+Install **Node.js 22 LTS** (including npm) and Git, then open PowerShell:
+
+```powershell
+git clone https://github.com/LiamMurphy53/aster-pic18-ide.git
+cd aster-pic18-ide\Windows
+npm ci
+npm test
+npm start
+```
+
+To build the installer and portable ZIP:
+
+```powershell
+npm run dist
+```
+
+The downloads appear in `dist/windows/` at the repository root. This packages the checked-in CodeMirror bundle; it does not require Swift or Visual Studio. The Windows app uses Electron with an isolated, sandboxed editor and native Node process/serial connections. It uses the same Microchip tools and project format as the Mac app. The Mac app retains its Swift/AppKit/WKWebView implementation.
+
 ## Package a release
 
-Run `bash package.sh` to create the universal Mac app ZIP and SHA-256 checksum in `dist/`. Upload both to a GitHub Release. This packaging step does not perform Developer ID signing or notarization.
+Run `bash package.sh` on macOS for the universal Mac ZIP, or `npm run dist` in `Windows/` on Windows for the installer and portable ZIP. GitHub Actions builds both OS packages on pushes and pull requests, tests the Windows backend, and launches the packaged Windows app to verify its editor bridge. Pushing a version tag (`v*`) publishes both downloads and SHA-256 checksums in a GitHub Release after both builds pass. The workflow can also be run manually with a new `release_tag`; the initial `[release]` commit publishes the Windows preview. Tags containing `preview` produce a pre-release. These builds do not perform Developer ID signing, notarization, or Windows Authenticode signing. See [the build workflow](.github/workflows/desktop-build.yml).
 
 ## License and third-party software
 

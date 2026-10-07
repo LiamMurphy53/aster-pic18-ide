@@ -1,0 +1,21 @@
+{
+  "name": "aster-pic18-ide-windows", "version": "0.1.0", "private": true,
+  "description": "Aster PIC18F87K22 development environment for Windows",
+  "author": "Liam Murphy", "license": "MIT", "main": "main.cjs",
+  "scripts": {
+    "prepare-assets": "node prepare-assets.cjs",
+    "start": "npm run prepare-assets && electron .",
+    "test": "node --test test/*.test.cjs",
+    "dist": "npm run prepare-assets && electron-builder --win --x64 --publish never",
+    "smoke": "electron . --smoke-test"
+  },
+  "dependencies": { "fast-xml-parser": "5.7.2", "serialport": "13.0.0" },
+  "devDependencies": { "electron": "44.7.0", "electron-builder": "26.15.3" },
+  "build": {
+    "appId": "com.aster.picide", "productName": "Aster", "asar": true,
+    "directories": { "output": "../dist/windows" },
+    "files": ["*.cjs", "assets/**/*", "!test/**/*"],
+    "win": { "target": ["nsis", "zip"], "artifactName": "Aster-PIC18-IDE-v${version}-Windows-${arch}.${ext}", "signAndEditExecutable": false },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "artifactName": "Aster-PIC18-IDE-v${version}-Windows-${arch}-Setup.${ext}" }
+  }
+}
