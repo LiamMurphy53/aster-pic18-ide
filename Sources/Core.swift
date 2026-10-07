@@ -65,12 +65,15 @@ final class CommandRunner {
 
 final class PICProject {
     let root: URL
+    private let preferences: UserDefaults
     var configuration = "default"
     var files: [URL] = []
+    private var declaredFiles: [URL] = []
     var configurations: [[String:String]] = []
     var prebuilt: URL?
     var name: String { root.deletingPathExtension().lastPathComponent }
-    init(_ url: URL) throws {
+    init(_ url: URL, preferences: UserDefaults = .standard) throws {
+        self.preferences = preferences
         if ["hex","elf"].contains(url.pathExtension.lowercased()) { root = url.deletingLastPathComponent(); prebuilt = url; files = [url]; return }
         root = url.standardizedFileURL.resolvingSymlinksInPath()
         let configURL = root.appendingPathComponent("nbproject/configurations.xml")
@@ -96,7 +99,36 @@ final class PICProject {
             let u = root.appendingPathComponent(item)
             if FileManager.default.fileExists(atPath:u.path), paths.insert(u.path).inserted { files.append(u) }
         }
-        files.sort { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        declaredFiles = files
+        refreshFiles()
+    }
+    func refreshFiles() {
+        guard prebuilt == nil else { return }
+        var discovered = declaredFiles
+        var paths = Set(discovered.map { $0.path })
+        let excluded = Set(["nbproject", "build", "dist", "disassembly"])
+        let extensions = Set(["asm", "s", "inc", "c", "h", "cpp"])
+        if let entries = FileManager.default.enumerator(at:root,includingPropertiesForKeys:[.isDirectoryKey,.isRegularFileKey,.isSymbolicLinkKey],options:[.skipsHiddenFiles]) {
+            for case let file as URL in entries {
+                guard let values = try? file.resourceValues(forKeys:[.isDirectoryKey,.isRegularFileKey,.isSymbolicLinkKey]) else { continue }
+                if values.isDirectory == true {
+                    if excluded.contains(file.lastPathComponent) || file.pathExtension.lowercased() == "x" { entries.skipDescendants() }
+                    continue
+                }
+                guard values.isSymbolicLink != true, values.isRegularFile == true, extensions.contains(file.pathExtension.lowercased()) else { continue }
+                let resolved = file.standardizedFileURL.resolvingSymlinksInPath()
+                guard resolved.path.hasPrefix(root.path + "/"), paths.insert(resolved.path).inserted else { continue }
+                discovered.append(resolved)
+            }
+        }
+        files = discovered.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    }
+    private var watchesKey: String { "aster.projectWatches." + digest(Data((prebuilt?.standardizedFileURL.resolvingSymlinksInPath().path ?? root.path).utf8)) }
+    var savedWatches: [String] { preferences.stringArray(forKey:watchesKey) ?? [] }
+    func saveWatches(_ names: [String]) throws {
+        guard names.allSatisfy({ $0.range(of:"^[A-Za-z_][A-Za-z0-9_.$]*$",options:.regularExpression) != nil }) else { throw IDEError("Use register or assembly symbol names for watches.") }
+        var seen = Set<String>()
+        preferences.set(names.filter { seen.insert($0).inserted },forKey:watchesKey)
     }
     func select(_ conf: String) throws {
         guard let c = configurations.first(where:{$0["name"] == conf}), c["device"]?.uppercased() == "PIC18F87K22", conf.range(of:"^[A-Za-z0-9_.-]+$",options:.regularExpression) != nil else { throw IDEError("Unsupported project configuration.") }
@@ -113,7 +145,7 @@ final class PICProject {
         guard data.count <= 8_000_000, !["elf","o","cof"].contains(u.pathExtension.lowercased()) else { throw IDEError("This is a binary or large output file. Use Reveal in Finder to inspect it with another tool.") }
         let encoding = String(data:data,encoding:.utf8) != nil ? "utf8" : "latin1"
         let content = String(data:data,encoding:encoding == "utf8" ? .utf8 : .isoLatin1) ?? ""
-        return ["path":u.path,"content":content,"digest":digest(data),"encoding":encoding,"readOnly":u.path.contains("/dist/") || u.path.contains("/build/") || u.lastPathComponent == "configurations.xml"]
+        return ["path":u.path,"content":content,"digest":digest(data),"encoding":encoding,"readOnly":u.path.contains("/dist/") || u.path.contains("/build/") || u.path.contains("/disassembly/") || u.lastPathComponent == "configurations.xml"]
     }
     func save(_ path: String, content: String, expected: String, encoding: String) throws -> [String:Any] {
         let u = try allowed(path)
@@ -166,17 +198,60 @@ final class PICProject {
         }
         return candidates.compactMapValues { $0.count == 1 ? $0.first : nil }
     }
+    static func listingAddresses(_ text: String, preprocessed: String = "") -> [String:Int] {
+        guard let range = text.range(of:"Symbol Table",options:.backwards) else { return [:] }
+        let body = String(text[..<range.lowerBound]), table = String(text[range.upperBound...])
+        // Accept address labels from compiled code, including expanded macros/includes.
+        // The symbol table contains final linker addresses; EQU constants are not addresses.
+        let labels = try! NSRegularExpression(pattern:"(?m)^\\s*\\d+\\s+[0-9A-Fa-f]{4,8}\\s+([A-Za-z_][A-Za-z0-9_.$]*)\\s*:")
+        var names = Set<String>()
+        for m in labels.matches(in:body,range:NSRange(body.startIndex...,in:body)) {
+            guard let r = Range(m.range(at:1),in:body) else { continue }
+            names.insert(String(body[r]))
+        }
+        // PIC-AS may omit unreferenced labels from the listing body. Its generated
+        // preprocessed input preserves those declarations, without reading live edits.
+        let declarations = try! NSRegularExpression(pattern:"(?m)^\\s*([A-Za-z_][A-Za-z0-9_.$]*)\\s*:")
+        for m in declarations.matches(in:preprocessed,range:NSRange(preprocessed.startIndex...,in:preprocessed)) {
+            if let r = Range(m.range(at:1),in:preprocessed) { names.insert(String(preprocessed[r])) }
+        }
+        var result: [String:Int] = [:]
+        for name in names {
+            let pattern = "(?:^|\\s)"+NSRegularExpression.escapedPattern(for:name)+"\\s+([0-9A-Fa-f]{4,8})(?=\\s|$)"
+            if let entry = match(table,pattern), let address = Int(entry[1],radix:16) { result[name] = address }
+        }
+        return result
+    }
+    func localAddressSymbols() throws -> [String:Int] {
+        guard prebuilt == nil else { return [:] }
+        let map = try String(contentsOf:artifact("map",image:"debug"),encoding:.utf8)
+        // Only read listings for objects in this link, excluding stale/unlinked files.
+        let objects = try NSRegularExpression(pattern:"(?m)^([^\\r\\n]+\\.o)\\s*$")
+        var candidates: [String:[Int]] = [:], seen = Set<String>()
+        for m in objects.matches(in:map,range:NSRange(map.startIndex...,in:map)) {
+            guard let r = Range(m.range(at:1),in:map) else { continue }
+            let path = String(map[r]).trimmingCharacters(in:.whitespaces)
+            let object = (path.hasPrefix("/") ? URL(fileURLWithPath:path) : root.appendingPathComponent(path)).standardizedFileURL.resolvingSymlinksInPath()
+            guard object.path.hasPrefix(root.path+"/build/"), seen.insert(object.path).inserted,
+                  let listing = try? String(contentsOf:object.deletingPathExtension().appendingPathExtension("lst"),encoding:.utf8) else { continue }
+            let preprocessed = (try? String(contentsOf:object.deletingPathExtension().appendingPathExtension("i"),encoding:.utf8)) ?? ""
+            for (name,address) in Self.listingAddresses(listing,preprocessed:preprocessed) { candidates[name,default:[]].append(address) }
+        }
+        // Duplicate local names across modules remain ambiguous, even at the same address.
+        return candidates.compactMapValues { $0.count == 1 ? $0.first : nil }
+    }
     var simulatorClockMHz: Double {
         guard let conf = configurations.first(where:{$0["name"] == configuration}),
-              let frequency = Double(conf["instructionFrequency"] ?? "") else { return 4 }
+              let frequency = Double(conf["instructionFrequency"] ?? "") else { return 16 }
         let units: [String:Double] = ["Mega":1.0,"Kilo":0.001,"None":0.000001]
         let scale: Double = units[conf["instructionFrequencyUnit"] ?? "Mega"] ?? 1.0
         // MPLAB's Simulator oscillator.frequency is the instruction clock, not Fosc.
         let fosc = frequency * scale * 4
-        return fosc.isFinite && (0.001...64).contains(fosc) ? fosc : 4
+        return fosc.isFinite && (0.001...64).contains(fosc) ? fosc : 16
     }
     func info() -> [String:Any] {
-        ["clockMHz":simulatorClockMHz,"name":prebuilt?.lastPathComponent ?? name,"path":root.path,"configuration":configuration,"configurations":configurations,"prebuilt":prebuilt != nil,"files":files.map { ["name":$0.lastPathComponent,"path":$0.path,"relative":$0.path.hasPrefix(root.path+"/") ? String($0.path.dropFirst(root.path.count+1)) : $0.path,"exists":FileManager.default.fileExists(atPath:$0.path)] },"outputs":outputs()]
+        refreshFiles()
+        return ["watches":savedWatches,"clockMHz":simulatorClockMHz,"name":prebuilt?.lastPathComponent ?? name,"path":root.path,"configuration":configuration,"configurations":configurations,"prebuilt":prebuilt != nil,"files":files.map { ["name":$0.lastPathComponent,"path":$0.path,"relative":$0.path.hasPrefix(root.path+"/") ? String($0.path.dropFirst(root.path.count+1)) : $0.path,"exists":FileManager.default.fileExists(atPath:$0.path)] },"outputs":outputs()]
     }
 }
 
@@ -350,15 +425,16 @@ final class IDECore {
     var onEvent: (String,Any)->Void = {_,_ in}
     var onConfirmation: (String)->Bool = {_ in false}
     var debugTool = "SIM"
-    var simulatorClockMHz = 4.0
+    var simulatorClockMHz = 16.0
     var stopwatchAccumulates = false
     var lastLocation: [String:Any] = [:]
     var lastBuild: [String:Any] = [:]
     var breakpoints: [[String:Any]] = []
     var localDataSymbols: [String:Int] = [:]
+    var localAddressSymbols: [String:Int] = [:]
     func open(_ path: String) throws -> [String:Any] {
         let p = try PICProject(URL(fileURLWithPath:path))
-        debugger?.stop(); debugger = nil; breakpoints = []; lastLocation = [:]; lastBuild = [:]; project = p
+        debugger?.stop(); debugger = nil; breakpoints = []; lastLocation = [:]; lastBuild = [:]; localDataSymbols = [:]; localAddressSymbols = [:]; project = p
         return p.info()
     }
     func requireProject() throws -> PICProject { guard let project else { throw IDEError("Open or create a project first.") }; return project }
@@ -412,6 +488,7 @@ final class IDECore {
         if p.prebuilt == nil { let b = try build(debug:true,tool:tool); guard b["ok"] as? Bool == true else { throw IDEError("Fix the build errors before starting the debugger.") } }
         let elf = try p.artifact("elf",image:"debug")
         localDataSymbols = try p.localDataSymbols()
+        localAddressSymbols = (try? p.localAddressSymbols()) ?? [:]
         clearBreakpointBindings()
         let s = try newSession(); debugger = s; debugTool = tool; lastLocation = [:]
         do {
@@ -512,6 +589,46 @@ final class IDECore {
         guard let s = debugger, !s.running else { throw IDEError("Start or pause a debug session to inspect memory.") }
         guard ["r","p","e","c","u","D"].contains(type), ["xb","i"].contains(format), address.range(of:"^(0[xX][0-9A-Fa-f]+|[0-9]+)$",options:.regularExpression) != nil, (1...512).contains(count) else { throw IDEError("Enter a valid memory address and a count between 1 and 512.") }
         return try s.checked("x /\(type)\(count)\(format) \(address)")
+    }
+    func resolveAddress(_ input: String) throws -> String {
+        guard let s = debugger, !s.running else { throw IDEError("Start or pause a debug session to resolve a symbol.") }
+        if input.range(of:"^(0[xX][0-9A-Fa-f]+|[0-9]+)$",options:.regularExpression) != nil { return input }
+        guard input.range(of:"^[A-Za-z_][A-Za-z0-9_.$]*$",options:.regularExpression) != nil else { throw IDEError("Enter a numeric address or a symbol name.") }
+        let output = try s.command("print /a \(input)")
+        if let address = match(output,"(?i)The Address of .+:\\s*(0x[0-9a-f]+)")?[1] { return address }
+        if let address = localAddressSymbols[input] { return "0x"+String(address,radix:16) }
+        throw IDEError("Unable to find a unique address for that symbol in the loaded image. Use its address from the map or assembly listing.")
+    }
+    func pointerAddress(_ name: String) throws -> String {
+        guard let s = debugger, !s.running else { throw IDEError("Start or pause a debug session to inspect a pointer.") }
+        let registers: [String]
+        switch name {
+        case "TBLPTR": registers = ["TBLPTRL","TBLPTRH","TBLPTRU"]
+        case "FSR0": registers = ["FSR0L","FSR0H"]
+        default: throw IDEError("Choose TBLPTR or FSR0.")
+        }
+        var address = 0
+        for (index,register) in registers.enumerated() {
+            let output = try s.checked("print /x /datasize:1 \(register)")
+            guard let byte = match(output,"=\\s*(?:0[xX])?([0-9a-fA-F]{1,2})(?=\\s|$)")?[1], let value = Int(byte,radix:16) else { throw IDEError("Could not read \(register).") }
+            address |= value << (8 * index)
+        }
+        return "0x"+String(address,radix:16)
+    }
+    func fullDisassembly() throws -> [String:Any] {
+        guard let s = debugger, !s.running else { throw IDEError("Start or pause a debug session to read the full disassembly.") }
+        let p = try requireProject()
+        // The PIC18F87K22 has 128 KiB of program flash, addressed in bytes.
+        // MDB's decoder reads ahead past flash when asked to decode the final word.
+        // Include that word as raw bytes so the listing still covers all flash.
+        let decoded = try s.checked("x /p65535i 0x0",timeout:90)
+        let lastWord = try s.checked("x /p2xb 0x1FFFE")
+        let output = decoded + "\n0x1FFFE   [final flash word; hex bytes] " + lastWord
+        let directory = p.root.appendingPathComponent("disassembly")
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+        let file = directory.appendingPathComponent("full-flash.txt")
+        try output.write(to:file,atomically:true,encoding:.utf8)
+        return ["path":file.path]
     }
     func writeRegister(name: String, value: String) throws -> String {
         guard let s = debugger, !s.running else { throw IDEError("Pause a debug session before editing a value.") }

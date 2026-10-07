@@ -3,12 +3,23 @@ import {EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightAct
 import {defaultKeymap, history, historyKeymap, indentWithTab} from '@codemirror/commands';
 import {searchKeymap, highlightSelectionMatches, openSearchPanel} from '@codemirror/search';
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from '@codemirror/autocomplete';
-import {StreamLanguage, HighlightStyle, syntaxHighlighting, bracketMatching, indentOnInput, foldGutter, foldKeymap} from '@codemirror/language';
+import {StreamLanguage, HighlightStyle, syntaxHighlighting, bracketMatching, indentOnInput, foldGutter, foldKeymap, foldService} from '@codemirror/language';
 import {tags} from '@lezer/highlight';
 import {cpp} from '@codemirror/lang-cpp';
 
 const instructions='ADDLW ADDWF ADDWFC ANDLW ANDWF BC BCF BN BNC BNN BNOV BNZ BOV BRA BSF BTFSC BTFSS BTG BZ CALL CLRF CLRWDT COMF CPFSEQ CPFSGT CPFSLT DAW DCFSNZ DECF DECFSZ GOTO INCF INCFSZ INFSNZ IORLW IORWF LFSR MOVF MOVFF MOVLB MOVLW MOVWF MULLW MULWF NEGF NOP POP PUSH RCALL RESET RETFIE RETLW RETURN RLCF RLNCF RRCF RRNCF SETF SLEEP SUBFWB SUBLW SUBWF SUBWFB SWAPF TBLRD TBLWT TSTFSZ XORLW XORWF'.split(' ');
-const directives='PROCESSOR CONFIG PSECT END EQU SET DS DB DW ORG BANKSEL BANKMASK GLOBAL EXTRN MACRO ENDM IF IFDEF IFNDEF ELSE ENDIF REPT ENDR INCLUDE RADIX'.split(' ');
+const directives='PROCESSOR CONFIG PSECT END EQU SET DS DB DW ORG BANKSEL BANKMASK GLOBAL EXTRN MACRO ENDM IRP IRPC LOCAL IF IFDEF IFNDEF ELSE ENDIF REPT ENDR INCLUDE RADIX'.split(' ');
+const assemblyFolds=foldService.of((state,from)=>{
+  const first=state.doc.lineAt(from);
+  if(!/\.(asm|s|inc)$/i.test(activePath)||!/^\s*(?:\/\/|;)\s*<editor-fold\b/.test(first.text))return null;
+  let depth=1;
+  for(let n=first.number+1;n<=state.doc.lines;n++){
+    const line=state.doc.line(n);
+    if(/^\s*(?:\/\/|;)\s*<editor-fold\b/.test(line.text))depth++;
+    if(/^\s*(?:\/\/|;)\s*<\/editor-fold>/.test(line.text)&&!--depth)return {from:first.to,to:line.from-1};
+  }
+  return null;
+});
 const asm=StreamLanguage.define({startState:()=>({comment:false}),token(stream,state){
   if(state.comment){if(stream.skipTo('*/')){stream.match('*/');state.comment=false;}else stream.skipToEnd();return 'comment';}
   if(stream.eatSpace())return null;
@@ -53,7 +64,7 @@ const decorations=EditorView.decorations.compute([marks],state=>{const m=state.f
 let view,activePath='',states=new Map(),device=[],callbacks={},readonly=new Compartment(),language=new Compartment();
 function completions(ctx){const word=ctx.matchBefore(/[\w.]+/);if(!word||(word.from===word.to&&!ctx.explicit))return null;return {from:word.from,options:[...instructions.map(label=>({label,type:'keyword',detail:'PIC18 instruction'})),...directives.map(label=>({label,type:'keyword',detail:'pic-as directive'})),...device.map(r=>({label:r.name,type:'variable',detail:r.address,info:r.description||r.bits.join(' · ')}))]};}
 function breakpointClick(v,line,event){if(event.button!==0||!activePath)return false;event.preventDefault();callbacks.breakpoint?.(activePath,v.state.doc.lineAt(line.from).number);return true;}
-function makeState(content,path,readOnly){return EditorState.create({doc:content,extensions:[gutter({class:'cm-breakpoint-gutter',renderEmptyElements:true,lineMarker:(v,line)=>v.state.field(marks).breaks.includes(v.state.doc.lineAt(line.from).number)?dot:null,lineMarkerChange:update=>update.startState.field(marks)!==update.state.field(marks),domEventHandlers:{mousedown:breakpointClick}}),lineNumbers({domEventHandlers:{mousedown:breakpointClick}}),highlightActiveLineGutter(),history(),drawSelection(),rectangularSelection(),crosshairCursor(),highlightActiveLine(),highlightSelectionMatches(),indentOnInput(),bracketMatching(),closeBrackets(),foldGutter(),language.of(/\.(c|h|cpp)$/.test(path)?cpp():asm),theme,syntaxHighlighting(syntax),readonly.of(EditorState.readOnly.of(readOnly)),autocompletion({override:[completions]}),keymap.of([{key:'Mod-s',run:()=>{callbacks.save?.();return true;}},...closeBracketsKeymap,...defaultKeymap,...searchKeymap,...historyKeymap,...completionKeymap,...foldKeymap,indentWithTab]),EditorState.tabSize.of(4),marks,decorations,EditorView.updateListener.of(update=>{if(update.docChanged)callbacks.change?.(activePath,update.state.doc.toString());if(update.selectionSet||update.docChanged){const pos=update.state.selection.main.head,line=update.state.doc.lineAt(pos);callbacks.cursor?.(line.number,pos-line.from+1);}})]});}
+function makeState(content,path,readOnly){return EditorState.create({doc:content,extensions:[gutter({class:'cm-breakpoint-gutter',renderEmptyElements:true,lineMarker:(v,line)=>v.state.field(marks).breaks.includes(v.state.doc.lineAt(line.from).number)?dot:null,lineMarkerChange:update=>update.startState.field(marks)!==update.state.field(marks),domEventHandlers:{mousedown:breakpointClick}}),lineNumbers({domEventHandlers:{mousedown:breakpointClick}}),highlightActiveLineGutter(),history(),drawSelection(),rectangularSelection(),crosshairCursor(),highlightActiveLine(),highlightSelectionMatches(),indentOnInput(),bracketMatching(),closeBrackets(),foldGutter(),assemblyFolds,language.of(/\.(c|h|cpp)$/.test(path)?cpp():asm),theme,syntaxHighlighting(syntax),readonly.of(EditorState.readOnly.of(readOnly)),autocompletion({override:[completions]}),keymap.of([{key:'Mod-s',run:()=>{callbacks.save?.();return true;}},...closeBracketsKeymap,...defaultKeymap,...searchKeymap,...historyKeymap,...completionKeymap,...foldKeymap,indentWithTab]),EditorState.tabSize.of(4),marks,decorations,EditorView.updateListener.of(update=>{if(update.docChanged)callbacks.change?.(activePath,update.state.doc.toString());if(update.selectionSet||update.docChanged){const pos=update.state.selection.main.head,line=update.state.doc.lineAt(pos);callbacks.cursor?.(line.number,pos-line.from+1);}})]});}
 window.AsterEditor={
  init(parent,options){callbacks=options;view=new EditorView({parent,state:makeState('','',true)});},
  setDevice(regs){device=regs;},

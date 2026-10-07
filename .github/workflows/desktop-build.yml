@@ -37,9 +37,13 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - name: Verify packaged application opens its editor and bridge
         shell: pwsh
+        env:
+          ASTER_SMOKE_REPORT: ${{ github.workspace }}/smoke-report.json
         run: |
-          $process = Start-Process -FilePath "$PWD/dist/windows/win-unpacked/Aster.exe" -ArgumentList '--smoke-test' -PassThru
+          $process = Start-Process -FilePath "$PWD/dist/windows/win-unpacked/Aster.exe" -ArgumentList '--smoke-test' -PassThru -RedirectStandardOutput smoke-stdout.log -RedirectStandardError smoke-stderr.log
           if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Application startup timed out' }
+          Get-Content smoke-stdout.log, smoke-stderr.log
+          if (Test-Path smoke-report.json) { Get-Content smoke-report.json }
           if ($process.ExitCode -ne 0) { throw "Application startup failed: $($process.ExitCode)" }
       - name: Create checksums
         shell: pwsh
@@ -63,7 +67,7 @@ jobs:
       - name: Package universal Mac application
         run: bash package.sh
       - name: Verify Apple Silicon and Intel slices
-        run: lipo -verify_arch arm64 x86_64 build/Aster.app/Contents/MacOS/Aster
+        run: lipo build/Aster.app/Contents/MacOS/Aster -verify_arch arm64 x86_64
       - uses: actions/upload-artifact@v4
         with:
           name: macos-downloads

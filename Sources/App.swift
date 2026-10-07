@@ -98,10 +98,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             NSWorkspace.shared.activateFileViewerSelecting([url]); respond(id,value:true); return
         }
         if op == "openDoc" {
-            let allowed = ["datasheet":"PIC18F87K22.pdf","board":"easypic-pro-v7-manual-v101.pdf","lab1":"Lab1_Intro_Micro_DevBoard.pdf","lab2":"Lab2_Learning_the_PIC_Development_Environment.pdf","lab3":"Lab3_Basic_Input_and_Output.pdf","assembler":"MPLAB_XC8_PIC_Assembler_User_Guide.pdf"]
+            let allowed = ["datasheet":"PIC18F87K22.pdf","board":"easypic-pro-v7-manual-v101.pdf","lab1":"Lab1_Intro_Micro_DevBoard.pdf","lab2":"Lab2_Learning_the_PIC_Development_Environment.pdf","lab3":"Lab3_Basic_Input_and_Output.pdf","lab4":"Lab4_Timers_LCD_and_Servo.pdf","assembler":"MPLAB_XC8_PIC_Assembler_User_Guide.pdf"]
             guard let key = args["key"] as? String, let filename = allowed[key] else { respond(id,error:"Unknown reference."); return }
-            let path = key == "assembler" ? core.tc.xc8+"/docs/"+filename : NSHomeDirectory()+"/Downloads/"+filename
-            if FileManager.default.fileExists(atPath:path) { NSWorkspace.shared.open(URL(fileURLWithPath:path)); respond(id,value:true) } else { respond(id,error:"Reference not found in Downloads: "+filename) }; return
+            let path = key == "lab4" ? resources.appendingPathComponent("References/"+filename).path : key == "assembler" ? core.tc.xc8+"/docs/"+filename : NSHomeDirectory()+"/Downloads/"+filename
+            if FileManager.default.fileExists(atPath:path) { NSWorkspace.shared.open(URL(fileURLWithPath:path)); respond(id,value:true) } else { respond(id,error:"Reference not found: "+filename) }; return
         }
         if op == "uiTestDone", testMode {
             let dir = resources.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Tests")
@@ -135,14 +135,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             var url = URL(fileURLWithPath:str("path")); if url.pathExtension != "X" { url.appendPathExtension("X") }
             guard url.deletingPathExtension().lastPathComponent.range(of:"^[A-Za-z][A-Za-z0-9_-]*$",options:.regularExpression) != nil else { throw IDEError("Use letters, numbers, underscores, or hyphens for the project name.") }
             guard !FileManager.default.fileExists(atPath:url.path) else { throw IDEError("A folder already exists there. Choose a new project name.") }
-            let template = resources.appendingPathComponent(str("template") == "interrupt" ? "InterruptTemplate.X" : "Template.X")
+            let kind = str("template", "blank")
+            guard ["blank", "basic", "interrupt"].contains(kind) else { throw IDEError("Choose a blank project or an available template.") }
+            let template = resources.appendingPathComponent(kind == "interrupt" ? "InterruptTemplate.X" : "Template.X")
             try FileManager.default.copyItem(at:template,to:url)
             if let e = FileManager.default.enumerator(at:url,includingPropertiesForKeys:[.isRegularFileKey]) { for case let file as URL in e {
                 if (try? file.resourceValues(forKeys:[.isRegularFileKey]).isRegularFile) == true, let source = try? String(contentsOf:file,encoding:.utf8) {
                     try source.replacingOccurrences(of:"Template.X",with:url.lastPathComponent).replacingOccurrences(of:"<name>Template</name>",with:"<name>\(url.deletingPathExtension().lastPathComponent)</name>").write(to:file,atomically:true,encoding:.utf8)
                 }
             } }
+            if kind == "blank" {
+                // Keep the MPLAB build configuration, but start with no example code.
+                try "".write(to:url.appendingPathComponent("main.asm"),atomically:true,encoding:.utf8)
+            }
             return try core.open(url.path)
+        case "setWatches":
+            let project = try core.requireProject()
+            guard str("projectPath") == project.root.path, let names = args["watches"] as? [String] else { throw IDEError("The project changed before its watches could be saved.") }
+            try project.saveWatches(names); return true
         case "project": return try core.requireProject().info()
         case "configuration": try core.requireProject().select(str("name")); return try core.requireProject().info()
         case "read": return try core.requireProject().read(str("path"))
@@ -156,6 +166,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         case "resetStopwatch": return try core.resetStopwatch()
         case "inspect": return try core.inspect(args["names"] as? [String] ?? [])
         case "breakpoint": return try core.breakpoint(path:str("path"),line:int("line",1))
+        case "resolveAddress": return try core.resolveAddress(str("address"))
+        case "pointerAddress": return try core.pointerAddress(str("pointer"))
+        case "fullDisassembly": return try core.fullDisassembly()
         case "memory": return try core.memory(type:str("type","r"),address:str("address","0x0"),count:int("count",64),format:str("format","xb"))
         case "writeRegister": return try core.writeRegister(name:str("name"),value:str("value"))
         case "debugCommand": guard let s = core.debugger else { throw IDEError("Start debugging first.") }; return try s.command(str("command"))

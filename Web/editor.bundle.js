@@ -1,5 +1,5 @@
 (() => {
-  // Aster IDE/node_modules/.pnpm/@marijn+find-cluster-break@1.0.4/node_modules/@marijn/find-cluster-break/src/index.js
+  // node_modules/.pnpm/@marijn+find-cluster-break@1.0.4/node_modules/@marijn/find-cluster-break/src/index.js
   var rangeFrom = [];
   var rangeTo = [];
   (() => {
@@ -73,7 +73,7 @@
     return code < 65536 ? 1 : 2;
   }
 
-  // Aster IDE/node_modules/.pnpm/@codemirror+state@6.5.2/node_modules/@codemirror/state/dist/index.js
+  // node_modules/.pnpm/@codemirror+state@6.5.2/node_modules/@codemirror/state/dist/index.js
   var Text = class _Text {
     /**
     Get the line description around the given position.
@@ -3415,7 +3415,7 @@
     return strict === true ? -1 : string2.length;
   }
 
-  // Aster IDE/node_modules/.pnpm/style-mod@4.1.3/node_modules/style-mod/src/style-mod.js
+  // node_modules/.pnpm/style-mod@4.1.3/node_modules/style-mod/src/style-mod.js
   var C = "\u037C";
   var COUNT = typeof Symbol == "undefined" ? "__" + C : Symbol.for(C);
   var SET = typeof Symbol == "undefined" ? "__styleSet" + Math.floor(Math.random() * 1e8) : Symbol("styleSet");
@@ -3546,7 +3546,7 @@
     }
   };
 
-  // Aster IDE/node_modules/.pnpm/w3c-keyname@2.2.8/node_modules/w3c-keyname/index.js
+  // node_modules/.pnpm/w3c-keyname@2.2.8/node_modules/w3c-keyname/index.js
   var base = {
     8: "Backspace",
     9: "Tab",
@@ -3652,7 +3652,7 @@
     return name2;
   }
 
-  // Aster IDE/node_modules/.pnpm/@codemirror+view@6.36.5/node_modules/@codemirror/view/dist/index.js
+  // node_modules/.pnpm/@codemirror+view@6.36.5/node_modules/@codemirror/view/dist/index.js
   function getSelection(root) {
     let target;
     if (root.nodeType == 11) {
@@ -12998,7 +12998,7 @@
     return activeLineGutterHighlighter;
   }
 
-  // Aster IDE/node_modules/.pnpm/@lezer+common@1.5.2/node_modules/@lezer/common/dist/index.js
+  // node_modules/.pnpm/@lezer+common@1.5.2/node_modules/@lezer/common/dist/index.js
   var DefaultBufferLength = 1024;
   var nextPropID = 0;
   var Range2 = class {
@@ -14622,7 +14622,7 @@
   };
   var stoppedInner = new NodeProp({ perNode: true });
 
-  // Aster IDE/node_modules/.pnpm/@lezer+highlight@1.2.1/node_modules/@lezer/highlight/dist/index.js
+  // node_modules/.pnpm/@lezer+highlight@1.2.1/node_modules/@lezer/highlight/dist/index.js
   var nextTagID = 0;
   var Tag = class _Tag {
     /**
@@ -15324,7 +15324,7 @@
     { tag: tags.punctuation, class: "tok-punctuation" }
   ]);
 
-  // Aster IDE/node_modules/.pnpm/@codemirror+language@6.11.0/node_modules/@codemirror/language/dist/index.js
+  // node_modules/.pnpm/@codemirror+language@6.11.0/node_modules/@codemirror/language/dist/index.js
   var _a;
   var languageDataProp = /* @__PURE__ */ new NodeProp();
   function defineLanguageFacet(baseData) {
@@ -17344,7 +17344,7 @@
     auto: /* @__PURE__ */ Decoration.mark({ class: "cm-iso", inclusive: true, attributes: { dir: "auto" }, bidiIsolate: null })
   };
 
-  // Aster IDE/node_modules/.pnpm/@codemirror+commands@6.8.1/node_modules/@codemirror/commands/dist/index.js
+  // node_modules/.pnpm/@codemirror+commands@6.8.1/node_modules/@codemirror/commands/dist/index.js
   var toggleComment = (target) => {
     let { state } = target, line = state.doc.lineAt(state.selection.main.from), config2 = getConfig(target.state, line.from);
     return config2.line ? toggleLineComment(target) : config2.block ? toggleBlockCommentByLine(target) : false;
@@ -18390,7 +18390,7 @@
   ].concat(standardKeymap);
   var indentWithTab = { key: "Tab", run: indentMore, shift: indentLess };
 
-  // Aster IDE/node_modules/.pnpm/crelt@1.0.7/node_modules/crelt/index.js
+  // node_modules/.pnpm/crelt@1.0.7/node_modules/crelt/index.js
   function crelt() {
     var elt = arguments[0];
     if (typeof elt == "string") elt = document.createElement(elt);
@@ -18419,7 +18419,7 @@
     }
   }
 
-  // Aster IDE/node_modules/.pnpm/@codemirror+search@6.5.10/node_modules/@codemirror/search/dist/index.js
+  // node_modules/.pnpm/@codemirror+search@6.5.10/node_modules/@codemirror/search/dist/index.js
   var basicNormalize = typeof String.prototype.normalize == "function" ? (x) => x.normalize("NFKD") : (x) => x;
   var SearchCursor = class {
     /**
@@ -19536,7 +19536,7 @@
     baseTheme3
   ];
 
-  // Aster IDE/node_modules/.pnpm/@codemirror+autocomplete@6.18.6/node_modules/@codemirror/autocomplete/dist/index.js
+  // node_modules/.pnpm/@codemirror+autocomplete@6.18.6/node_modules/@codemirror/autocomplete/dist/index.js
   var CompletionContext = class {
     /**
     Create a new completion context. (Mostly useful for testing
@@ -21096,7 +21096,7 @@
   ];
   var completionKeymapExt = /* @__PURE__ */ Prec.highest(/* @__PURE__ */ keymap.computeN([completionConfig], (state) => state.facet(completionConfig).defaultKeymap ? [completionKeymap] : []));
 
-  // Aster IDE/node_modules/.pnpm/@lezer+lr@1.4.10/node_modules/@lezer/lr/dist/index.js
+  // node_modules/.pnpm/@lezer+lr@1.4.10/node_modules/@lezer/lr/dist/index.js
   var Stack = class _Stack {
     /**
     @internal
@@ -22844,7 +22844,7 @@
     return spec.get;
   }
 
-  // Aster IDE/node_modules/.pnpm/@lezer+cpp@1.1.6/node_modules/@lezer/cpp/dist/index.js
+  // node_modules/.pnpm/@lezer+cpp@1.1.6/node_modules/@lezer/cpp/dist/index.js
   var RawString = 1;
   var templateArgsEndFallback = 2;
   var MacroName = 3;
@@ -22983,7 +22983,7 @@
     tokenPrec: 24852
   });
 
-  // Aster IDE/node_modules/.pnpm/@codemirror+lang-cpp@6.0.3/node_modules/@codemirror/lang-cpp/dist/index.js
+  // node_modules/.pnpm/@codemirror+lang-cpp@6.0.3/node_modules/@codemirror/lang-cpp/dist/index.js
   var cppLanguage = /* @__PURE__ */ LRLanguage.define({
     name: "cpp",
     parser: /* @__PURE__ */ parser.configure({
@@ -23015,9 +23015,20 @@
     return new LanguageSupport(cppLanguage);
   }
 
-  // Aster IDE/Web/editor-source.js
+  // Web/editor-source.js
   var instructions = "ADDLW ADDWF ADDWFC ANDLW ANDWF BC BCF BN BNC BNN BNOV BNZ BOV BRA BSF BTFSC BTFSS BTG BZ CALL CLRF CLRWDT COMF CPFSEQ CPFSGT CPFSLT DAW DCFSNZ DECF DECFSZ GOTO INCF INCFSZ INFSNZ IORLW IORWF LFSR MOVF MOVFF MOVLB MOVLW MOVWF MULLW MULWF NEGF NOP POP PUSH RCALL RESET RETFIE RETLW RETURN RLCF RLNCF RRCF RRNCF SETF SLEEP SUBFWB SUBLW SUBWF SUBWFB SWAPF TBLRD TBLWT TSTFSZ XORLW XORWF".split(" ");
-  var directives = "PROCESSOR CONFIG PSECT END EQU SET DS DB DW ORG BANKSEL BANKMASK GLOBAL EXTRN MACRO ENDM IF IFDEF IFNDEF ELSE ENDIF REPT ENDR INCLUDE RADIX".split(" ");
+  var directives = "PROCESSOR CONFIG PSECT END EQU SET DS DB DW ORG BANKSEL BANKMASK GLOBAL EXTRN MACRO ENDM IRP IRPC LOCAL IF IFDEF IFNDEF ELSE ENDIF REPT ENDR INCLUDE RADIX".split(" ");
+  var assemblyFolds = foldService.of((state, from) => {
+    const first = state.doc.lineAt(from);
+    if (!/\.(asm|s|inc)$/i.test(activePath) || !/^\s*(?:\/\/|;)\s*<editor-fold\b/.test(first.text)) return null;
+    let depth = 1;
+    for (let n = first.number + 1; n <= state.doc.lines; n++) {
+      const line = state.doc.line(n);
+      if (/^\s*(?:\/\/|;)\s*<editor-fold\b/.test(line.text)) depth++;
+      if (/^\s*(?:\/\/|;)\s*<\/editor-fold>/.test(line.text) && !--depth) return { from: first.to, to: line.from - 1 };
+    }
+    return null;
+  });
   var asm = StreamLanguage.define({ startState: () => ({ comment: false }), token(stream, state) {
     if (state.comment) {
       if (stream.skipTo("*/")) {
@@ -23115,7 +23126,7 @@
     return true;
   }
   function makeState(content2, path, readOnly2) {
-    return EditorState.create({ doc: content2, extensions: [gutter({ class: "cm-breakpoint-gutter", renderEmptyElements: true, lineMarker: (v, line) => v.state.field(marks2).breaks.includes(v.state.doc.lineAt(line.from).number) ? dot : null, lineMarkerChange: (update) => update.startState.field(marks2) !== update.state.field(marks2), domEventHandlers: { mousedown: breakpointClick } }), lineNumbers({ domEventHandlers: { mousedown: breakpointClick } }), highlightActiveLineGutter(), history(), drawSelection(), rectangularSelection(), crosshairCursor(), highlightActiveLine(), highlightSelectionMatches(), indentOnInput(), bracketMatching(), closeBrackets(), foldGutter(), language2.of(/\.(c|h|cpp)$/.test(path) ? cpp() : asm), theme2, syntaxHighlighting(syntax), readonly.of(EditorState.readOnly.of(readOnly2)), autocompletion({ override: [completions] }), keymap.of([{ key: "Mod-s", run: () => {
+    return EditorState.create({ doc: content2, extensions: [gutter({ class: "cm-breakpoint-gutter", renderEmptyElements: true, lineMarker: (v, line) => v.state.field(marks2).breaks.includes(v.state.doc.lineAt(line.from).number) ? dot : null, lineMarkerChange: (update) => update.startState.field(marks2) !== update.state.field(marks2), domEventHandlers: { mousedown: breakpointClick } }), lineNumbers({ domEventHandlers: { mousedown: breakpointClick } }), highlightActiveLineGutter(), history(), drawSelection(), rectangularSelection(), crosshairCursor(), highlightActiveLine(), highlightSelectionMatches(), indentOnInput(), bracketMatching(), closeBrackets(), foldGutter(), assemblyFolds, language2.of(/\.(c|h|cpp)$/.test(path) ? cpp() : asm), theme2, syntaxHighlighting(syntax), readonly.of(EditorState.readOnly.of(readOnly2)), autocompletion({ override: [completions] }), keymap.of([{ key: "Mod-s", run: () => {
       callbacks.save?.();
       return true;
     } }, ...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap, ...completionKeymap, ...foldKeymap, indentWithTab]), EditorState.tabSize.of(4), marks2, decorations2, EditorView.updateListener.of((update) => {

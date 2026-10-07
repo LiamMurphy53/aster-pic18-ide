@@ -48,11 +48,11 @@ Use **Command** on macOS and **Ctrl** on Windows: **S** saves, **B** builds, **O
 4. Use **F11** to step an instruction, **F10** to step over, and **F5** to continue or pause. **Shift–F5** stops the session. The toolbar has the same controls.
 5. Click a line number or the margin to its left to add or remove a breakpoint. A red dot appears immediately. Set breakpoints before starting debugging or while paused, then press **Continue (F5)** to run to them. Breakpoints stay selected when you stop and restart the session. Click a watch value to edit one byte of target RAM.
 
-**New project** offers an Assembly starter and an Interrupt bench. Both use normal MPLAB project metadata and the course's reset/high-priority/low-priority vector placements.
+**New project** offers a **Blank project** with an empty `main.asm`, plus the Assembly starter and Interrupt bench examples. All use normal MPLAB project metadata and the course's reset/high-priority/low-priority vector placements. Choose Blank project to write your own code from scratch; add your program before building or debugging.
 
 ## Debug stopwatch
 
-The Debug Inspector shows the simulator's instruction-cycle count and elapsed-time reading. Aster imports the selected MPLAB configuration's simulator clock automatically. **Clock (Fosc)** displays the equivalent oscillator frequency: a 4 MHz instruction clock is 16 MHz Fosc on PIC18. You can override Fosc before starting; opening a project or switching configuration restores that project's clock. Older global clock overrides are ignored.
+The Debug Inspector shows the simulator's instruction-cycle count and elapsed-time reading. Aster imports the selected MPLAB configuration's simulator clock automatically. **Clock (Fosc)** displays the equivalent oscillator frequency: a 4 MHz instruction clock is 16 MHz Fosc on PIC18. New projects and missing clock settings default to **16 MHz Fosc** (4 MHz instruction clock). Saved project clock settings still take precedence. You can override Fosc before starting; opening a project or switching configuration restores that project's clock. Older global clock overrides are ignored.
 
 By default, the stopwatch resets on each Continue, matching MPLAB's normal stopwatch behavior. Pause at your starting breakpoint, then continue to the ending breakpoint to measure only that interval. Individual steps accumulate within the current run. Enable **Accumulate across runs** before starting a session if you want a cumulative measurement instead. The stopwatch **Reset** clears the measurement without moving the CPU. Paused time is excluded, and the reading refreshes at each stop. Stopwatch timing is available with Simulator only.
 
@@ -150,3 +150,13 @@ Run `bash package.sh` on macOS for the universal Mac ZIP, or `npm run dist` in `
 ## License and third-party software
 
 Aster's original code is available under the [MIT License](LICENSE). Bundled CodeMirror dependencies and Microchip device metadata retain their own notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), also included inside the app. Aster is an independent project and is not affiliated with or endorsed by Microchip.
+
+Source files placed inside a project folder (including subfolders) appear in Aster’s explorer, even when they are not listed in MPLAB metadata. Return to Aster or click **Refresh project files** beside the project name to discover added files. Opening and refreshing preserve unsaved editor tabs. Build inputs still follow the MPLAB project settings; copying a file into the folder does not automatically add it to the linked program.
+
+The **Bench** panel adds timer, I/O, and LCD/table-pointer register watch groups and shortcuts to program memory, build listings, and simulator inputs. **Inputs / flags** supports RE3 high/low levels without enabling interrupts. **Memory** accepts numeric addresses or symbols present in the loaded image, shows hexadecimal bytes alongside text, and can open a read-only full flash disassembly (including unused flash). The Lab 4 handout is available in Course references. These tools inspect your program; they do not supply lab solutions or replace physical oscilloscope/logic-analyzer measurements.
+
+Watches are saved automatically per project on this Mac when added or removed, including Bench watch groups. Reopening a project restores its last watch list, including an empty list. Projects without saved watches start empty.
+
+For Lab 4, **Memory** also resolves local ROM and RAM labels (for example `LCDstr` and `BYTESTR`) from the current debug build. Select Program memory for ROM strings and File registers for RAM buffers. **At TBLPTR** reads ROM at the current three-byte table pointer; **At FSR0** reads RAM at the current indirect pointer. The same shortcuts are in **Bench**, alongside Timer3, Timer5, and Timer7 watch groups. These reads require a paused session. For the supplied Lab 4 example, set **Clock (Fosc)** to **16 MHz** before starting if the project clock differs. Unlinked files and ambiguous local names are excluded from address lookup.
+
+Assembly sections marked with `// <editor-fold …>` and `// </editor-fold>` can be collapsed and expanded with the editor gutter arrows, including nested sections in the Lab 4 example. `IRP`, `IRPC`, and `LOCAL` are included in directive highlighting and completion.

@@ -4,3 +4,5 @@
 .stopwatch-time{display:block;font:22px var(--mono);color:var(--mint);margin:7px 0}.stopwatch-cycles{font:10px var(--mono);color:var(--text);overflow-wrap:anywhere;margin-bottom:12px}.stopwatch-clock{display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--muted);gap:8px}.stopwatch-clock input{width:70px;padding:4px 6px;background:#202c3b;border:1px solid var(--line);border-radius:4px;color:var(--text);font:10px var(--mono)}.stopwatch-clock input:disabled{opacity:.7}.stopwatch-section .empty-small{font-size:9px;margin-top:6px}.stopwatch-section .text-button{letter-spacing:0}
 
 .stopwatch-mode{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);margin-top:9px}.stopwatch-mode input{accent-color:var(--mint);margin:0}
+
+.bench-tools{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:16px 20px}.bench-actions{display:flex;gap:6px;flex-wrap:wrap}.bench-tools p{font-size:10px;line-height:1.6;color:var(--muted)}.memory-controls{flex-wrap:wrap}.memory-controls #memoryCount{width:65px}.panel-nav{gap:10px}.panel-tabs{overflow-x:auto}.panel-nav{flex-shrink:0}

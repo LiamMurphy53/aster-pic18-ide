@@ -19,6 +19,17 @@ function walk(root) {
     return e.isDirectory() ? walk(p) : e.isFile() ? [p] : [];
   });
 }
+// Public fs APIs also work for templates stored inside Electron's app.asar.
+// Native fs.cpSync uses internal filesystem calls that bypass the ASAR adapter.
+function copyTree(source, target) {
+  fs.mkdirSync(target, { recursive: true });
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name), to = path.join(target, entry.name);
+    if (entry.isDirectory()) copyTree(from, to);
+    else if (entry.isFile()) fs.writeFileSync(to, fs.readFileSync(from), { flag: 'wx' });
+    else throw Error('Unexpected link in project template.');
+  }
+}
 class Preferences {
   constructor(file) { this.file = file; try { this.data = JSON.parse(fs.readFileSync(file)); } catch { this.data = {}; } }
   set(key, value) { this.data[key] = value; fs.mkdirSync(path.dirname(this.file), { recursive: true }); const tmp = this.file + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(this.data)); fs.renameSync(tmp, this.file); }
@@ -205,4 +216,4 @@ class IDECore {
   async program(index=0){if(this.debugger)throw Error('Stop debugging before programming.');if(!Number.isInteger(index)||index<0)throw Error('Invalid tool index.');const p=this.requireProject();if(!p.prebuilt&&!(await this.build()).ok)throw Error('Fix build errors before programming.');const image=p.artifact('hex','production'),s=await this.newSession();try{await s.checked('device PIC18F87K22');await s.checked('set poweroptions.powerenable false');await s.checked('hwtool PICkit3 -p '+index,60000);const log=await s.checked('program '+quoteMDB(image),120000);if(!/program succeeded/i.test(log))throw Error('Programming was not confirmed.\n'+log);return {ok:true,log,image};}finally{s.stop();}}
   shutdown(){this.debugger?.stop();this.runner.cancel();if(this.serial?.isOpen)this.serial.close();}
 }
-module.exports={Preferences,Toolchain,CommandRunner,PICProject,PromptReader,MDBSession,IDECore,digest,quoteMDB,slash,inside};
+module.exports={copyTree,Preferences,Toolchain,CommandRunner,PICProject,PromptReader,MDBSession,IDECore,digest,quoteMDB,slash,inside};

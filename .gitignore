@@ -16,5 +16,6 @@ Tests/*.log
 Examples/*/build/
 Examples/*/dist/
 **/nbproject/private/
-
 Windows/assets/
+# Locally supplied course handouts are not part of the public IDE source.
+/Resources/References/
