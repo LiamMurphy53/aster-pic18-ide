@@ -105,7 +105,7 @@ class PICProject {
     this.files = [...new Set([...this.declared,...scan(this.root)].map(p=>fs.existsSync(p)?fs.realpathSync(p):p))].sort();
   }
   get watchKey() { return 'watches.' + digest(slash(this.prebuilt || this.root).toLowerCase()); }
-  get clockMHz() { const c = this.configurations.find(c=>c.name===this.configuration); const f = Number(c?.instructionFrequency)*({Mega:1,Kilo:.001,None:.000001}[c?.instructionFrequencyUnit || 'Mega'] || 1)*4; return f>=.001 && f<=64 ? f : 16; }
+  get clockMHz() { return 16; }
   allowed(input) {
     const resolved = fs.realpathSync(input);
     if (this.files.includes(resolved)) return resolved;

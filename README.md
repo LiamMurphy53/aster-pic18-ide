@@ -52,7 +52,7 @@ Use **Command** on macOS and **Ctrl** on Windows: **S** saves, **B** builds, **O
 
 ## Debug stopwatch
 
-The Debug Inspector shows the simulator's instruction-cycle count and elapsed-time reading. Aster imports the selected MPLAB configuration's simulator clock automatically. **Clock (Fosc)** displays the equivalent oscillator frequency: a 4 MHz instruction clock is 16 MHz Fosc on PIC18. New projects and missing clock settings default to **16 MHz Fosc** (4 MHz instruction clock). Saved project clock settings still take precedence. You can override Fosc before starting; opening a project or switching configuration restores that project's clock. Older global clock overrides are ignored.
+The Debug Inspector shows the simulator's instruction-cycle count and elapsed-time reading. **Clock (Fosc)** defaults to **16 MHz** whenever a project opens or its configuration changes, including projects with older MPLAB clock settings. This corresponds to a 4 MHz instruction clock on PIC18. You can override Fosc before starting a debug session.
 
 By default, the stopwatch resets on each Continue, matching MPLAB's normal stopwatch behavior. Pause at your starting breakpoint, then continue to the ending breakpoint to measure only that interval. Individual steps accumulate within the current run. Enable **Accumulate across runs** before starting a session if you want a cumulative measurement instead. The stopwatch **Reset** clears the measurement without moving the CPU. Paused time is excluded, and the reading refreshes at each stop. Stopwatch timing is available with Simulator only.
 

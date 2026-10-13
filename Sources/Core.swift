@@ -240,15 +240,8 @@ final class PICProject {
         // Duplicate local names across modules remain ambiguous, even at the same address.
         return candidates.compactMapValues { $0.count == 1 ? $0.first : nil }
     }
-    var simulatorClockMHz: Double {
-        guard let conf = configurations.first(where:{$0["name"] == configuration}),
-              let frequency = Double(conf["instructionFrequency"] ?? "") else { return 16 }
-        let units: [String:Double] = ["Mega":1.0,"Kilo":0.001,"None":0.000001]
-        let scale: Double = units[conf["instructionFrequencyUnit"] ?? "Mega"] ?? 1.0
-        // MPLAB's Simulator oscillator.frequency is the instruction clock, not Fosc.
-        let fosc = frequency * scale * 4
-        return fosc.isFinite && (0.001...64).contains(fosc) ? fosc : 16
-    }
+    // Start every project at 16 MHz Fosc; the debug clock field allows overrides.
+    var simulatorClockMHz: Double { 16 }
     func info() -> [String:Any] {
         refreshFiles()
         return ["watches":savedWatches,"clockMHz":simulatorClockMHz,"name":prebuilt?.lastPathComponent ?? name,"path":root.path,"configuration":configuration,"configurations":configurations,"prebuilt":prebuilt != nil,"files":files.map { ["name":$0.lastPathComponent,"path":$0.path,"relative":$0.path.hasPrefix(root.path+"/") ? String($0.path.dropFirst(root.path.count+1)) : $0.path,"exists":FileManager.default.fileExists(atPath:$0.path)] },"outputs":outputs()]

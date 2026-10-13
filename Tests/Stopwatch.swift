@@ -31,13 +31,13 @@ import Foundation
         try source.write(to:file,atomically:true,encoding:.utf8)
         let configURL=project.appendingPathComponent("nbproject/configurations.xml")
         let config=try XMLDocument(contentsOf:configURL)
-        for value in try config.nodes(forXPath:"//Simulator/property[@key='oscillator.frequency']/@value") { value.stringValue="4" }
+        for value in try config.nodes(forXPath:"//Simulator/property[@key='oscillator.frequency']/@value") { value.stringValue="1" }
         try config.xmlData.write(to:configURL)
         _ = try core.open(project.path)
         var checks=0
         func check(_ name:String,_ ok:Bool) throws { guard ok else {throw IDEError("FAIL "+name)};checks+=1;print("PASS "+name) }
         func cycles(_ reading:[String:Any])->Int { Int(reading["cycles"] as? String ?? "") ?? -1 }
-        try check("Imports 4 MHz MPLAB instruction clock as 16 MHz Fosc",core.project?.simulatorClockMHz==16)
+        try check("Legacy 1 MHz MPLAB instruction clock does not replace the 16 MHz default",core.project?.simulatorClockMHz==16)
         try check("Inactive session has no stopwatch reading",core.stopwatchReading()["available"] as? Bool == false)
         do {_ = try core.startDebug(tool:"SIM",clockMHz:0);throw IDEError("Invalid frequency accepted")} catch {try check("Rejects invalid clock before starting",core.debugger == nil)}
         _ = try core.startDebug(tool:"SIM",clockMHz:8,accumulateStopwatch:true)
@@ -74,7 +74,7 @@ import Foundation
         _ = try core.debugAction("stop",names:[])
         try check("Stopping session clears displayed availability",core.stopwatchReading()["available"] as? Bool==false)
         _ = try core.startDebug(tool:"SIM")
-        try check("Default session uses project clock",core.simulatorClockMHz==16)
+        try check("Default session uses 16 MHz Fosc",core.simulatorClockMHz==16)
         try check("Default stopwatch resets on Continue",!core.stopwatchAccumulates)
         _ = try core.debugAction("stepi",names:[])
         try check("First step reports two-cycle GOTO",cycles(core.stopwatchReading())==2)
@@ -85,7 +85,7 @@ import Foundation
         while (core.debugger?.running==true || core.lastLocation["line"] as? Int != endLine) && Date()<runDeadline {Thread.sleep(forTimeInterval:0.02)}
         let interval=core.stopwatchReading()
         try check("Continue excludes cycles before the starting stop",core.lastLocation["line"] as? Int==endLine && cycles(interval)==12)
-        try check("Per-run elapsed time uses inherited 4 MHz instruction clock",abs((interval["seconds"] as? Double ?? -1)-3e-6)<1e-12)
+        try check("Per-run elapsed time uses default 4 MHz instruction clock",abs((interval["seconds"] as? Double ?? -1)-3e-6)<1e-12)
         _ = try core.debugAction("stop",names:[])
         print("ALL \(checks) STOPWATCH CHECKS PASSED")
     }
