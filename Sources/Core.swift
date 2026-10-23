@@ -17,6 +17,7 @@ struct Toolchain {
     var xc8 = "/Applications/microchip/xc8/v2.46"
     var platform: String { mplab + "/mplab_platform" }
     var assembler: String { xc8 + "/pic-as/bin/pic-as" }
+    var cCompiler: String { xc8 + "/bin/xc8-cc" }
     var make: String { platform + "/bin/make" }
     var pack: String { mplab + "/packs/Microchip/PIC18F-K_DFP/1.13.292" }
     var java: String {
@@ -35,7 +36,7 @@ struct Toolchain {
         return env
     }
     func status() -> [[String:Any]] {
-        [("MPLAB X", "6.20", make), ("PIC assembler", "2.46", assembler), ("MDB debugger", "6.20", platform + "/lib/mdb.jar"), ("PIC18F-K device pack", "1.13.292", pack), ("Java runtime", "MPLAB bundled", java)].map { ["name":$0.0,"version":$0.1,"path":$0.2,"available":FileManager.default.fileExists(atPath:$0.2)] }
+        [("MPLAB X", "6.20", make), ("PIC assembler", "2.46", assembler), ("XC8 C compiler", "2.46", cCompiler), ("MDB debugger", "6.20", platform + "/lib/mdb.jar"), ("PIC18F-K device pack", "1.13.292", pack), ("Java runtime", "MPLAB bundled", java)].map { ["name":$0.0,"version":$0.1,"path":$0.2,"available":FileManager.default.fileExists(atPath:$0.2)] }
     }
 }
 
@@ -643,7 +644,7 @@ final class IDECore {
     }
     func triggerInterrupt(_ source: String) throws -> String {
         guard let s = debugger, debugTool == "SIM", !s.running else { throw IDEError("Start and pause the simulator to raise an interrupt flag.") }
-        let sources: [String:(String,Int)] = ["INT0":("INTCON",0x02),"INT1":("INTCON3",0x01),"INT2":("INTCON3",0x02),"TMR0":("INTCON",0x04),"TMR1":("PIR1",0x01),"TMR2":("PIR1",0x02),"ADC":("PIR1",0x40)]
+        let sources: [String:(String,Int)] = ["INT0":("INTCON",0x02),"INT1":("INTCON3",0x01),"INT2":("INTCON3",0x02),"TMR0":("INTCON",0x04),"TMR1":("PIR1",0x01),"TMR2":("PIR1",0x02),"CCP1":("PIR1",0x04),"CCP2":("PIR2",0x01),"ADC":("PIR1",0x40)]
         guard let (register,mask) = sources[source] else { throw IDEError("Unknown interrupt source.") }
         let output = try s.checked("print /x \(register)")
         guard let m = match(output,"=\\s*([0-9a-fA-F]+)"), let value = Int(m[1],radix:16) else { throw IDEError("Could not read the interrupt flag register.") }

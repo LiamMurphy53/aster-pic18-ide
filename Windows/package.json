@@ -15,6 +15,7 @@
     "appId": "com.aster.picide", "productName": "Aster", "asar": true,
     "directories": { "output": "../dist/windows" },
     "files": ["*.cjs", "assets/**/*", "!test/**/*"],
+    "extraResources": [{"from":"ad2", "to":"ad2"}],
     "win": { "target": ["nsis", "zip"], "artifactName": "Aster-PIC18-IDE-v${version}-Windows-${arch}.${ext}", "signAndEditExecutable": false },
     "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "artifactName": "Aster-PIC18-IDE-v${version}-Windows-${arch}-Setup.${ext}" }
   }

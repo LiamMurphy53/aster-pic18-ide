@@ -23117,7 +23117,9 @@
   function completions(ctx) {
     const word = ctx.matchBefore(/[\w.]+/);
     if (!word || word.from === word.to && !ctx.explicit) return null;
-    return { from: word.from, options: [...instructions.map((label) => ({ label, type: "keyword", detail: "PIC18 instruction" })), ...directives.map((label) => ({ label, type: "keyword", detail: "pic-as directive" })), ...device.map((r) => ({ label: r.name, type: "variable", detail: r.address, info: r.description || r.bits.join(" \xB7 ") }))] };
+    const c = /\.(c|h|cpp)$/i.test(activePath);
+    const keywords = c ? "void volatile unsigned char int long static const return if else for while switch case break continue struct enum typedef".split(" ") : instructions;
+    return { from: word.from, options: [...keywords.map((label) => ({ label, type: "keyword", detail: c ? "C keyword" : "PIC18 instruction" })), ...!c ? directives.map((label) => ({ label, type: "keyword", detail: "pic-as directive" })) : [], ...device.map((r) => ({ label: r.name, type: "variable", detail: r.address, info: r.description || r.bits.join(" \xB7 ") }))] };
   }
   function breakpointClick(v, line, event) {
     if (event.button !== 0 || !activePath) return false;

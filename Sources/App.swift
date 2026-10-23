@@ -84,7 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             panel.beginSheetModal(for:window) { response in self.respond(id,value:response == .OK ? panel.url?.path ?? "" : "") }; return
         }
         if op == "chooseNew" {
-            let panel = NSSavePanel(); panel.title = "Create PIC18 Assembly Project"; panel.nameFieldStringValue = "MyProject.X"; panel.message = "Creates an MPLAB-compatible assembly project with reset and interrupt vectors."; panel.canCreateDirectories = true
+            let panel = NSSavePanel(); panel.title = "Create PIC18 Project"; panel.nameFieldStringValue = "MyProject.X"; panel.message = "Creates an MPLAB-compatible assembly or XC8 C project."; panel.canCreateDirectories = true
             panel.beginSheetModal(for:window) { response in self.respond(id,value:response == .OK ? panel.url?.path ?? "" : "") }; return
         }
         if op == "confirm" {
@@ -98,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             NSWorkspace.shared.activateFileViewerSelecting([url]); respond(id,value:true); return
         }
         if op == "openDoc" {
-            let allowed = ["datasheet":"PIC18F87K22.pdf","board":"easypic-pro-v7-manual-v101.pdf","lab1":"Lab1_Intro_Micro_DevBoard.pdf","lab2":"Lab2_Learning_the_PIC_Development_Environment.pdf","lab3":"Lab3_Basic_Input_and_Output.pdf","lab4":"Lab4_Timers_LCD_and_Servo.pdf","assembler":"MPLAB_XC8_PIC_Assembler_User_Guide.pdf"]
+            let allowed = ["lab5":"Lab5_Timers_Interrupts_and_CCP.pdf","datasheet":"PIC18F87K22.pdf","board":"easypic-pro-v7-manual-v101.pdf","lab1":"Lab1_Intro_Micro_DevBoard.pdf","lab2":"Lab2_Learning_the_PIC_Development_Environment.pdf","lab3":"Lab3_Basic_Input_and_Output.pdf","lab4":"Lab4_Timers_LCD_and_Servo.pdf","assembler":"MPLAB_XC8_PIC_Assembler_User_Guide.pdf"]
             guard let key = args["key"] as? String, let filename = allowed[key] else { respond(id,error:"Unknown reference."); return }
             let path = key == "lab4" ? resources.appendingPathComponent("References/"+filename).path : key == "assembler" ? core.tc.xc8+"/docs/"+filename : NSHomeDirectory()+"/Downloads/"+filename
             if FileManager.default.fileExists(atPath:path) { NSWorkspace.shared.open(URL(fileURLWithPath:path)); respond(id,value:true) } else { respond(id,error:"Reference not found: "+filename) }; return
@@ -120,6 +120,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         func str(_ key: String,_ fallback: String = "") -> String { args[key] as? String ?? fallback }
         func int(_ key: String,_ fallback: Int = 0) -> Int { args[key] as? Int ?? fallback }
         switch op {
+        case "ad2Status", "ad2Capture":
+            let helper = resources.appendingPathComponent("aster-ad2")
+            guard FileManager.default.isExecutableFile(atPath:helper.path) else { throw IDEError("Analog Discovery capture helper is missing from this app build.") }
+            var parameters = ["status"]
+            if op == "ad2Capture" {
+                let mode = str("mode"), span = args["span"] as? Double ?? 0, channel = int("channel",-1)
+                guard ["scope","logic"].contains(mode),span >= 0.001,span <= 3,channel >= 0,channel <= (mode == "scope" ? 1 : 15) else { throw IDEError("Invalid Analog Discovery capture settings.") }
+                parameters = ["capture",mode,String(span),String(channel)]
+            }
+            let (code,output) = try CommandRunner().run(helper.path,parameters,timeout:12)
+            guard code == 0, let data = output.data(using:.utf8), let object = try? JSONSerialization.jsonObject(with:data) else { throw IDEError(output.trimmingCharacters(in:.whitespacesAndNewlines)) }
+            return object
         case "bootstrap":
             let defaults = UserDefaults.standard
             if let path = defaults.string(forKey:"mplab") { core.tc.mplab = path }
@@ -136,8 +148,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             guard url.deletingPathExtension().lastPathComponent.range(of:"^[A-Za-z][A-Za-z0-9_-]*$",options:.regularExpression) != nil else { throw IDEError("Use letters, numbers, underscores, or hyphens for the project name.") }
             guard !FileManager.default.fileExists(atPath:url.path) else { throw IDEError("A folder already exists there. Choose a new project name.") }
             let kind = str("template", "blank")
-            guard ["blank", "basic", "interrupt"].contains(kind) else { throw IDEError("Choose a blank project or an available template.") }
-            let template = resources.appendingPathComponent(kind == "interrupt" ? "InterruptTemplate.X" : "Template.X")
+            guard ["blank", "basic", "interrupt", "c"].contains(kind) else { throw IDEError("Choose a blank project or an available template.") }
+            let template = resources.appendingPathComponent(kind == "interrupt" ? "InterruptTemplate.X" : kind == "c" ? "CTemplate.X" : "Template.X")
             try FileManager.default.copyItem(at:template,to:url)
             if let e = FileManager.default.enumerator(at:url,includingPropertiesForKeys:[.isRegularFileKey]) { for case let file as URL in e {
                 if (try? file.resourceValues(forKeys:[.isRegularFileKey]).isRegularFile) == true, let source = try? String(contentsOf:file,encoding:.utf8) {
@@ -148,7 +160,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 // Keep the MPLAB build configuration, but start with no example code.
                 try "".write(to:url.appendingPathComponent("main.asm"),atomically:true,encoding:.utf8)
             }
-            return try core.open(url.path)
+            let result = try core.open(url.path)
+            if kind == "c" {
+                do { _ = try core.regenerate() }
+                catch { self.core.onEvent("buildOutput", "Project created. Regenerate Makefiles after setting up the Microchip tools.\n" + error.localizedDescription + "\n") }
+            }
+            return result
         case "setWatches":
             let project = try core.requireProject()
             guard str("projectPath") == project.root.path, let names = args["watches"] as? [String] else { throw IDEError("The project changed before its watches could be saved.") }

@@ -1,6 +1,6 @@
 # Aster — PIC18 IDE
 
-A desktop workspace for PIC18F87K22 assembly development, using MPLAB X 6.20 and XC8 / pic-as 2.46. Edit, build, simulate, inspect registers, and explore interrupts in one app. Available for **macOS** and **Windows**.
+A desktop workspace for PIC18F87K22 assembly and XC8 C development, using MPLAB X 6.20 and XC8 / pic-as 2.46. Edit, build, simulate, inspect registers, and explore interrupts in one app. Available for **macOS** and **Windows**.
 
 ## Install Aster
 
@@ -30,7 +30,7 @@ The Mac download is locally signed but is not Developer ID signed or notarized; 
    | MPLAB X | `/Applications/microchip/mplabx/v6.20` | `C:\Program Files\Microchip\MPLABX\v6.20` |
    | XC8 | `/Applications/microchip/xc8/v2.46` | `C:\Program Files\Microchip\xc8\v2.46` |
 
-   If installed elsewhere (including `Program Files (x86)`), enter that actual location. All five tool checks should report **FOUND**. Settings and recent projects are saved per user; Windows stores them under `%APPDATA%\Aster`.
+   If installed elsewhere (including `Program Files (x86)`), enter that actual location. All six tool checks, including the XC8 C compiler, should report **FOUND**. Settings and recent projects are saved per user; Windows stores them under `%APPDATA%\Aster`.
 5. Choose **Open project**, select your MPLAB `.X` folder, then choose **Project → Regenerate Makefiles** before the first build on a different computer or operating system. This uses Microchip's generator to replace machine-specific paths in generated build files. The included templates and examples originally contain Mac paths; regeneration is required on Windows. Use **New project** to create a blank project, assembly starter, or interrupt bench.
 6. Click **Build**, select **Simulator**, then click **Start debugging**. No board is needed for simulation. A connected PICkit 3 and an externally powered board are needed for hardware programming/debugging.
 
@@ -48,7 +48,7 @@ Use **Command** on macOS and **Ctrl** on Windows: **S** saves, **B** builds, **O
 4. Use **F11** to step an instruction, **F10** to step over, and **F5** to continue or pause. **Shift–F5** stops the session. The toolbar has the same controls.
 5. Click a line number or the margin to its left to add or remove a breakpoint. A red dot appears immediately. Set breakpoints before starting debugging or while paused, then press **Continue (F5)** to run to them. Breakpoints stay selected when you stop and restart the session. Click a watch value to edit one byte of target RAM.
 
-**New project** offers a **Blank project** with an empty `main.asm`, plus the Assembly starter and Interrupt bench examples. All use normal MPLAB project metadata and the course's reset/high-priority/low-priority vector placements. Choose Blank project to write your own code from scratch; add your program before building or debugging.
+**New project** offers a **Blank project** with an empty `main.asm`, an **XC8 C project** with a compilable `main.c`, plus the Assembly starter and Interrupt bench examples. All use normal MPLAB project metadata and the course's reset/high-priority/low-priority vector placements. Choose Blank project to write your own code from scratch; add your program before building or debugging.
 
 ## Debug stopwatch
 
@@ -100,7 +100,7 @@ Assembly watches are one byte. For non-exported `DS` symbols, Aster reads the li
 
 ## Current scope
 
-This is a working first release for the course's PIC18F87K22 workflow. It includes real editing, building, simulation, debugging, memory views, interrupt stimulation, configuration editing, and serial transport. It is not complete MPLAB feature parity. MCC, visual peripheral code generation, a full stimulus scheduler, multi-device support, and project-wide refactoring are not included. Existing C projects can be built, but the focused editor and verification work target your assembly labs. Physical PICkit programming/debugging and physical serial adapters remain to be checked on your bench.
+This is a working first release for the course's PIC18F87K22 workflow. It includes real editing, building, simulation, debugging, memory views, interrupt stimulation, configuration editing, and serial transport. It is not complete MPLAB feature parity. MCC, visual peripheral code generation, a full stimulus scheduler, multi-device support, and project-wide refactoring are not included. Existing C projects can be built and debugged, and Aster can create an XC8 C project. The C template is intentionally minimal so you can add the course timer ISR and configuration bits yourself. Physical PICkit programming/debugging and physical serial adapters remain to be checked on your bench.
 
 ## Build from source
 
@@ -160,3 +160,15 @@ Watches are saved automatically per project on this Mac when added or removed, i
 For Lab 4, **Memory** also resolves local ROM and RAM labels (for example `LCDstr` and `BYTESTR`) from the current debug build. Select Program memory for ROM strings and File registers for RAM buffers. **At TBLPTR** reads ROM at the current three-byte table pointer; **At FSR0** reads RAM at the current indirect pointer. The same shortcuts are in **Bench**, alongside Timer3, Timer5, and Timer7 watch groups. These reads require a paused session. For the supplied Lab 4 example, set **Clock (Fosc)** to **16 MHz** before starting if the project clock differs. Unlinked files and ambiguous local names are excluded from address lookup.
 
 Assembly sections marked with `// <editor-fold …>` and `// </editor-fold>` can be collapsed and expanded with the editor gutter arrows, including nested sections in the Lab 4 example. `IRP`, `IRPC`, and `LOCAL` are included in directive highlighting and completion.
+
+## Lab 5 workflow
+
+Create separate MPLAB projects for Part a (assembly) and Part b (XC8 C). Choose **XC8 C project** for Part b; Aster creates an MPLAB-compatible `main.c` project and regenerates its makefiles when the Microchip tools are available. For an existing C project, open its `.X` folder and use **Project → Regenerate Makefiles** if the compiler paths are from another computer. Aster shows compiler diagnostics in the build output and can open the reported source line.
+
+The **Bench** panel now has a **CCP / PWM** register watch group. **Inputs / flags** can raise CCP1 or CCP2 flags while the simulator is paused. Use the stopwatch for firmware timing and the physical AD2 logic analyzer to measure RC2 pulse width/period or RD4 frequency/duty cycle. The Lab 5 handout is linked in **Course references** when present in Downloads. The course Canvas starter files are not bundled.
+
+## Analog Discovery 2 instruments
+
+The **Instruments** panel provides single-shot captures from Digilent WaveForms SDK: Scope 1/2 as an oscilloscope or DIO 0–15 as a logic analyzer. Aster displays the waveform and calculates period, high time, frequency, and duty cycle when at least two rising edges are captured. Select a 50 ms window for Lab 5 RC2 pulses or 2.2 s for the 1 Hz RD4 LED. Measurements use the actual sample rate; choose a short window for finer timing resolution. Connect AD2 ground to board ground.
+
+Install Digilent WaveForms on the same computer; Aster loads its SDK at runtime and does not bundle it. Close a WaveForms session using the AD2 before capturing in Aster. The Mac build includes its capture helper. Windows release builds compile the helper with Visual Studio C tools and package it beside the app; local Windows source builds need the same helper in `Windows/ad2/`. Hardware acquisition still needs validation with a connected AD2.

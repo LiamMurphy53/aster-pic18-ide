@@ -38,6 +38,7 @@ class Toolchain {
   constructor(mplab = 'C:/Program Files/Microchip/MPLABX/v6.20', xc8 = 'C:/Program Files/Microchip/xc8/v2.46') { this.mplab = slash(mplab); this.xc8 = slash(xc8); }
   get platform() { return this.mplab + '/mplab_platform'; }
   get assembler() { return this.xc8 + '/pic-as/bin/pic-as.exe'; }
+  get cCompiler() { return this.xc8 + '/bin/xc8-cc.exe'; }
   get make() { return [this.mplab + '/gnuBins/GnuWin32/bin/make.exe', this.platform + '/bin/make.exe'].find(fs.existsSync) || this.mplab + '/gnuBins/GnuWin32/bin/make.exe'; }
   get pack() { return this.mplab + '/packs/Microchip/PIC18F-K_DFP/1.13.292'; }
   get java() {
@@ -52,7 +53,7 @@ class Toolchain {
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toLowerCase() !== 'path'));
     return { ...env, PATH: [path.dirname(this.make), this.platform + '/bin', this.xc8 + '/bin', this.xc8 + '/pic-as/bin', process.env.PATH || process.env.Path || ''].join(path.delimiter), MPLABX_THIRDPARTY_LIB_PATH: this.platform + '/thirdparty/', netbeans_dir: this.platform, mplabx_dir: this.platform };
   }
-  status() { return [['MPLAB X','6.20',this.make],['PIC assembler','2.46',this.assembler],['MDB debugger','6.20',this.platform+'/lib/mdb.jar'],['PIC18F-K device pack','1.13.292',this.pack],['Java runtime','MPLAB bundled',this.java]].map(([name,version,p]) => ({ name,version,path:p,available:fs.existsSync(p) })); }
+  status() { return [['MPLAB X','6.20',this.make],['PIC assembler','2.46',this.assembler],['XC8 C compiler','2.46',this.cCompiler],['MDB debugger','6.20',this.platform+'/lib/mdb.jar'],['PIC18F-K device pack','1.13.292',this.pack],['Java runtime','MPLAB bundled',this.java]].map(([name,version,p]) => ({ name,version,path:p,available:fs.existsSync(p) })); }
 }
 class CommandRunner {
   cancel() { this.cancelled = true; this.process?.kill(); }
@@ -211,7 +212,7 @@ class IDECore {
   async fullDisassembly(){const s=this.paused();const r=await s.checked('x /p65535i 0x0',90000)+'\n0x1FFFE [final flash word; hex bytes] '+await s.checked('x /p2xb 0x1FFFE');const dir=path.join(this.requireProject().root,'disassembly');fs.mkdirSync(dir,{recursive:true});const file=path.join(dir,'full-flash.txt');fs.writeFileSync(file,r);return {path:slash(file)};}
   async writeRegister(name,value){if(!symbol.test(name)||!/^(0x[0-9a-f]{1,2}|\d{1,3})$/i.test(value)||Number(value)>255)throw Error('Use a register name and a byte value (0–255).');const address=await this.resolveAddress(name);return this.paused().checked('write /r '+address+' 0x'+Number(value).toString(16));}
   async setPin(pin,high){if(this.debugTool!=='SIM'||!/^R[A-J][0-7]$/.test(pin))throw Error('Choose a simulator input pin, such as RB0.');const s=this.paused();await s.checked('write pin '+pin+(high?' high':' low'));return s.checked('print pin '+pin);}
-  async triggerInterrupt(source){if(this.debugTool!=='SIM')throw Error('Simulator only.');const pair={INT0:['INTCON',2],INT1:['INTCON3',1],INT2:['INTCON3',2],TMR0:['INTCON',4],TMR1:['PIR1',1],TMR2:['PIR1',2],ADC:['PIR1',64]}[source];if(!pair)throw Error('Unknown interrupt source.');const r=await this.paused().checked('print /x '+pair[0]);const v=r.match(/=\s*(?:0x)?([a-f0-9]+)/i)?.[1];if(!v)throw Error('Could not read flag register.');await this.writeRegister(pair[0],'0x'+(parseInt(v,16)|pair[1]).toString(16));return 'Raised '+source+' flag. Step or continue; firmware must enable the interrupt.';}
+  async triggerInterrupt(source){if(this.debugTool!=='SIM')throw Error('Simulator only.');const pair={INT0:['INTCON',2],INT1:['INTCON3',1],INT2:['INTCON3',2],TMR0:['INTCON',4],TMR1:['PIR1',1],TMR2:['PIR1',2],CCP1:['PIR1',4],CCP2:['PIR2',1],ADC:['PIR1',64]}[source];if(!pair)throw Error('Unknown interrupt source.');const r=await this.paused().checked('print /x '+pair[0]);const v=r.match(/=\s*(?:0x)?([a-f0-9]+)/i)?.[1];if(!v)throw Error('Could not read flag register.');await this.writeRegister(pair[0],'0x'+(parseInt(v,16)|pair[1]).toString(16));return 'Raised '+source+' flag. Step or continue; firmware must enable the interrupt.';}
   async detectTools(){if(this.debugger)return this.debugger.command('hwtool');const s=await this.newSession();try{return await s.command('hwtool');}finally{s.stop();}}
   async program(index=0){if(this.debugger)throw Error('Stop debugging before programming.');if(!Number.isInteger(index)||index<0)throw Error('Invalid tool index.');const p=this.requireProject();if(!p.prebuilt&&!(await this.build()).ok)throw Error('Fix build errors before programming.');const image=p.artifact('hex','production'),s=await this.newSession();try{await s.checked('device PIC18F87K22');await s.checked('set poweroptions.powerenable false');await s.checked('hwtool PICkit3 -p '+index,60000);const log=await s.checked('program '+quoteMDB(image),120000);if(!/program succeeded/i.test(log))throw Error('Programming was not confirmed.\n'+log);return {ok:true,log,image};}finally{s.stop();}}
   shutdown(){this.debugger?.stop();this.runner.cancel();if(this.serial?.isOpen)this.serial.close();}

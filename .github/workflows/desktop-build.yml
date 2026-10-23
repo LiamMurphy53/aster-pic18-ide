@@ -30,6 +30,13 @@ jobs:
       - name: Verify file protection and debugger protocol
         run: npm test
         working-directory: Windows
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build Analog Discovery capture helper
+        shell: cmd
+        run: cl /nologo /W4 /O2 /Fe:Windows\ad2\aster-ad2.exe Sources\ad2_capture.c
+      - name: Verify Analog Discovery capture analysis
+        shell: cmd
+        run: Windows\ad2\aster-ad2.exe self-test
       - name: Package Windows installer and ZIP
         run: npm run dist
         working-directory: Windows
