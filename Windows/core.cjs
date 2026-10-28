@@ -105,6 +105,20 @@ class PICProject {
     });
     this.files = [...new Set([...this.declared,...scan(this.root)].map(p=>fs.existsSync(p)?fs.realpathSync(p):p))].sort();
   }
+  addSource(name) {
+    if(this.prebuilt)throw Error('Open a source project first.');
+    if(typeof name!=='string'||! /^[A-Za-z_][A-Za-z0-9_-]*\.(c|h|asm|s|inc)$/i.test(name)||/^(con|prn|aux|nul|com[0-9]|lpt[0-9])\./i.test(name))throw Error('Use a filename such as timers.c, timers.h, or helpers.asm.');
+    const ext=path.extname(name).toLowerCase(),compiler=this.configurations.find(c=>c.name===this.configuration)?.compiler;
+    if(ext==='.c'&&compiler!=='XC8')throw Error('Create an XC8 C project to compile C source.');
+    const target=path.join(this.root,name);if(fs.existsSync(target)||this.files.some(f=>path.basename(f).toLowerCase()===name.toLowerCase()))throw Error('That filename already exists. Open it in the explorer instead.');
+    const metadata=path.join(this.root,'nbproject/configurations.xml'),original=fs.readFileSync(metadata,'utf8'),folder=['.h','.inc'].includes(ext)?'HeaderFiles':'SourceFiles';
+    const re=new RegExp('(<logicalFolder\\b(?=[^>]*\\bname="'+folder+'")[^>]*>)([\\s\\S]*?)(</logicalFolder>)');
+    if(!re.test(original))throw Error("This project's source folder metadata is missing.");
+    const xml=original.replace(re,(_,a,b,c)=>a+b+'  <itemPath>'+name+'</itemPath>\n    '+c);
+    fs.writeFileSync(target,'',{flag:'wx'});
+    try{fs.writeFileSync(metadata,xml);}catch(e){fs.rmSync(target);throw e;}
+    this.declared.push(target);this.refresh();return target;
+  }
   get watchKey() { return 'watches.' + digest(slash(this.prebuilt || this.root).toLowerCase()); }
   get clockMHz() { return 16; }
   allowed(input) {
@@ -174,9 +188,16 @@ class IDECore {
     const makefile='nbproject/Makefile-'+p.configuration+'.mk';if(!fs.existsSync(path.join(p.root,makefile)))throw Error('Use Project → Regenerate Makefiles before building.');
     const args=['-f',makefile,clean?'.clean-conf':'.build-conf','SUBPROJECTS=','CONF='+p.configuration];if(debug){args.push('TYPE_IMAGE=DEBUG_RUN');if(!clean)args.push('-B');}
     if(conf.compiler==='pic-as')args.push('MP_AS="'+this.tc.assembler+'" -Wa,-a','MP_LD="'+this.tc.assembler+'"');
-    else if(debug&&tool==='PICkit3'&&conf.tool!=='PICkit3')throw Error('Select PICkit 3 in the MPLAB C project configuration first.');
     this.event('buildStart',{clean,debug});const started=Date.now();
-    const {code,log}=await this.runner.run(this.tc.make,args,{cwd:p.root,env:this.tc.environment},s=>this.event('buildOutput',s));
+    const makePath=path.join(p.root,makefile);let original=null,updated=null,runResult;
+    if(debug&&!clean&&conf.compiler==='XC8'){
+      if(!['SIM','PICkit3'].includes(tool))throw Error('Unsupported C debug target.');
+      original=fs.readFileSync(makePath,'utf8');if(!/-mdebugger=[A-Za-z0-9]+/.test(original))throw Error('Regenerate Makefiles before building this C debug configuration.');
+      updated=original.replace(/-mdebugger=[A-Za-z0-9]+/g,'-mdebugger='+(tool==='SIM'?'none':'pickit3'));if(updated!==original)fs.writeFileSync(makePath,updated);
+    }
+    try{runResult=await this.runner.run(this.tc.make,args,{cwd:p.root,env:this.tc.environment},s=>this.event('buildOutput',s));}
+    finally{if(original!==null&&updated!==original&&fs.readFileSync(makePath,'utf8')===updated)fs.writeFileSync(makePath,original);}
+    const {code,log}=runResult;
     const diagnostics=log.split(/\r?\n/).flatMap(line=>{const m=line.match(/^(.+?):(\d+)(?::(\d*))?:\s*(fatal error|error|warning|note):\s*(.*)$/)||line.match(/^(.+?)\((\d+)\)\s*:\s*(?:(\d+):)?\s*(error|warning|note):?\s*(.*)$/);return m?[{path:slash(path.resolve(p.root,m[1])),line:Number(m[2]),column:Number(m[3])||1,severity:m[4],message:m[5]}]:[];});
     const result={ok:code===0,exitCode:code,elapsed:(Date.now()-started)/1000,log,diagnostics,outputs:p.outputs(),clean};this.event('buildEnd',result);return result;
   }
@@ -212,7 +233,7 @@ class IDECore {
   async fullDisassembly(){const s=this.paused();const r=await s.checked('x /p65535i 0x0',90000)+'\n0x1FFFE [final flash word; hex bytes] '+await s.checked('x /p2xb 0x1FFFE');const dir=path.join(this.requireProject().root,'disassembly');fs.mkdirSync(dir,{recursive:true});const file=path.join(dir,'full-flash.txt');fs.writeFileSync(file,r);return {path:slash(file)};}
   async writeRegister(name,value){if(!symbol.test(name)||!/^(0x[0-9a-f]{1,2}|\d{1,3})$/i.test(value)||Number(value)>255)throw Error('Use a register name and a byte value (0–255).');const address=await this.resolveAddress(name);return this.paused().checked('write /r '+address+' 0x'+Number(value).toString(16));}
   async setPin(pin,high){if(this.debugTool!=='SIM'||!/^R[A-J][0-7]$/.test(pin))throw Error('Choose a simulator input pin, such as RB0.');const s=this.paused();await s.checked('write pin '+pin+(high?' high':' low'));return s.checked('print pin '+pin);}
-  async triggerInterrupt(source){if(this.debugTool!=='SIM')throw Error('Simulator only.');const pair={INT0:['INTCON',2],INT1:['INTCON3',1],INT2:['INTCON3',2],TMR0:['INTCON',4],TMR1:['PIR1',1],TMR2:['PIR1',2],CCP1:['PIR1',4],CCP2:['PIR2',1],ADC:['PIR1',64]}[source];if(!pair)throw Error('Unknown interrupt source.');const r=await this.paused().checked('print /x '+pair[0]);const v=r.match(/=\s*(?:0x)?([a-f0-9]+)/i)?.[1];if(!v)throw Error('Could not read flag register.');await this.writeRegister(pair[0],'0x'+(parseInt(v,16)|pair[1]).toString(16));return 'Raised '+source+' flag. Step or continue; firmware must enable the interrupt.';}
+  async triggerInterrupt(source){if(this.debugTool!=='SIM')throw Error('Simulator only.');const pair={INT0:['INTCON',2],INT1:['INTCON3',1],INT2:['INTCON3',2],TMR0:['INTCON',4],TMR1:['PIR1',1],TMR2:['PIR1',2],CCP1:['PIR3',2],CCP2:['PIR3',4],ADC:['PIR1',64]}[source];if(!pair)throw Error('Unknown interrupt source.');const r=await this.paused().checked('print /x '+pair[0]);const v=r.match(/=\s*(?:0x)?([a-f0-9]+)/i)?.[1];if(!v)throw Error('Could not read flag register.');await this.writeRegister(pair[0],'0x'+(parseInt(v,16)|pair[1]).toString(16));return 'Raised '+source+' flag. Step or continue; firmware must enable the interrupt.';}
   async detectTools(){if(this.debugger)return this.debugger.command('hwtool');const s=await this.newSession();try{return await s.command('hwtool');}finally{s.stop();}}
   async program(index=0){if(this.debugger)throw Error('Stop debugging before programming.');if(!Number.isInteger(index)||index<0)throw Error('Invalid tool index.');const p=this.requireProject();if(!p.prebuilt&&!(await this.build()).ok)throw Error('Fix build errors before programming.');const image=p.artifact('hex','production'),s=await this.newSession();try{await s.checked('device PIC18F87K22');await s.checked('set poweroptions.powerenable false');await s.checked('hwtool PICkit3 -p '+index,60000);const log=await s.checked('program '+quoteMDB(image),120000);if(!/program succeeded/i.test(log))throw Error('Programming was not confirmed.\n'+log);return {ok:true,log,image};}finally{s.stop();}}
   shutdown(){this.debugger?.stop();this.runner.cancel();if(this.serial?.isOpen)this.serial.close();}

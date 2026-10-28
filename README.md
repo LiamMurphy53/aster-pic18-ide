@@ -43,10 +43,10 @@ Use **Command** on macOS and **Ctrl** on Windows: **S** saves, **B** builds, **O
 ## Start working
 
 1. Choose **Open project** and select your existing `.X` folder. Aster also accepts a prebuilt `.hex` or `.elf`.
-2. Edit your assembly source. **⌘S** saves; **⌘B** builds. Clicking a compiler problem opens its source line.
+2. Edit your C or assembly source. **⌘S** saves; **⌘B** builds. Clicking a compiler problem opens its source line.
 3. Select **Simulator** and click **Start debugging**. Aster saves open edits, builds a debug ELF, loads it into Microchip's real simulator, and pauses at reset.
 4. Use **F11** to step an instruction, **F10** to step over, and **F5** to continue or pause. **Shift–F5** stops the session. The toolbar has the same controls.
-5. Click a line number or the margin to its left to add or remove a breakpoint. A red dot appears immediately. Set breakpoints before starting debugging or while paused, then press **Continue (F5)** to run to them. Breakpoints stay selected when you stop and restart the session. Click a watch value to edit one byte of target RAM.
+5. Click a line number or the margin to its left to add or remove a breakpoint. A red dot appears immediately. Set breakpoints before starting debugging or while paused, then press **Continue (F5)** to run to them. Breakpoints stay selected when you stop and restart the session. Click a watch value to edit one byte of target RAM. Use **Step C source line** to advance C code by source line; instruction stepping remains available.
 
 **New project** offers a **Blank project** with an empty `main.asm`, an **XC8 C project** with a compilable `main.c`, plus the Assembly starter and Interrupt bench examples. All use normal MPLAB project metadata and the course's reset/high-priority/low-priority vector placements. Choose Blank project to write your own code from scratch; add your program before building or debugging.
 
@@ -73,7 +73,7 @@ The panel can raise INT0, INT1, INT2, Timer0, Timer1, Timer2, or ADC flags. Firm
 ## Other tools
 
 - **Device:** search 236 SFR definitions and their bit fields, add watches, and inspect the 80-pin package signal list.
-- **Configuration:** choose compiler-supported configuration values and apply them to the active assembly file. Existing `EBTR` / `EBRT` aliases are recognized. Changes remain unsaved until you save or build.
+- **Configuration:** choose compiler-supported configuration values and apply them to the active assembly or C file. Existing `EBTR` / `EBRT` aliases are recognized. Changes remain unsaved until you save or build.
 - **Memory:** read file registers, flash, configuration memory, or EEPROM; select Disassembly for program instructions.
 - **Debug console:** send individual MDB commands. This is an advanced console; use the main debug controls for session state changes.
 - **Serial terminal:** connect a listed serial port. The course default is 19200 baud, 8-N-1, with LF endings. No port is opened automatically.
@@ -92,7 +92,7 @@ MPLAB 6.20's generated PIC-AS build flags for this exact device are used. The C 
 
 ## Project compatibility and file protection
 
-Existing projects keep their compiler flags, linker placements, configuration selection, and ordinary MPLAB build outputs. Aster adds assembly listings; debug builds are rebuilt so a prior image cannot silently be reused. It leaves generated project settings alone during ordinary editing and builds. **Project → Regenerate Makefiles** invokes Microchip's own generator when generated makefiles are missing or need updating.
+Existing projects keep their compiler flags, linker placements, configuration selection, and ordinary MPLAB build outputs. For C debug builds, Aster selects XC8’s `-mdebugger=pickit3` or `-mdebugger=none` according to the debug target, temporarily updating the generated makefile and restoring it after the build. This avoids the headless generator’s incorrect `none` setting for PICkit 3; no separate MPLAB GUI setup is needed. Aster adds assembly listings; debug builds are rebuilt so a prior image cannot silently be reused. It leaves generated project settings alone during ordinary editing and builds. **Project → Regenerate Makefiles** invokes Microchip's own generator when generated makefiles are missing or need updating.
 
 The editor preserves UTF-8 or Latin-1 source encoding. It checks that a file has not changed on disk since it was opened before saving. If it has, your edits stay in the editor: copy them, close that tab, and reopen the file to reconcile the changes. Closing a dirty tab or quitting with unsaved edits asks before discarding them.
 
@@ -165,7 +165,11 @@ Assembly sections marked with `// <editor-fold …>` and `// </editor-fold>` can
 
 Create separate MPLAB projects for Part a (assembly) and Part b (XC8 C). Choose **XC8 C project** for Part b; Aster creates an MPLAB-compatible `main.c` project and regenerates its makefiles when the Microchip tools are available. For an existing C project, open its `.X` folder and use **Project → Regenerate Makefiles** if the compiler paths are from another computer. Aster shows compiler diagnostics in the build output and can open the reported source line.
 
-The **Bench** panel now has a **CCP / PWM** register watch group. **Inputs / flags** can raise CCP1 or CCP2 flags while the simulator is paused. Use the stopwatch for firmware timing and the physical AD2 logic analyzer to measure RC2 pulse width/period or RD4 frequency/duty cycle. The Lab 5 handout is linked in **Course references** when present in Downloads. The course Canvas starter files are not bundled.
+The **Bench** panel has **CCP / PWM**, **24-bit compare**, and **RPG / LEDs** watch groups. The extension-byte group uses the starter’s `TMR1X`, `CCPR1X`, and `DTIME` names; add your own names if you rename them. On PIC18F87K22, CCP1 and CCP2 flags/enables/priorities are in `PIR3` / `PIE3` / `IPR3`. **Inputs / flags** can raise CCP1 or CCP2 flags while the simulator is paused. Use the stopwatch for firmware timing and the physical AD2 logic analyzer to measure RC2 pulse width/period or RD4 frequency/duty cycle. **Course references** includes all eight Lab 5 PDFs: the handout, C introduction, both XC8 guides, encoder tutorial and datasheet, and the Peatman LCD and RPG chapters. Aster searches beside the open project (including nearby `lab5` folders), your last reference folder, and Downloads. If a document is missing, choose it in the file picker; its folder is remembered. The course Canvas starter files are not bundled. For Part a, copy the contents of `lab5a_orig.asm` into the assembly project’s `main.asm`; its reset and interrupt vector placements are already configured. For Part b, copy `lab5b_xc8_orig.c` into the C project’s `main.c`. The supplied C starter intentionally contains unfinished assignments, so complete those before building. Use **Import starter into current tab** in the explorer to load the supplied starter into `main.asm` or `main.c`. The import is undoable until saved and leaves the original starter alone. **New source / header** creates and registers additional files and regenerates the build rules; use it for separate `.c` and `.h` files. **Export current source** saves a submission copy under your required filename. Files copied into the project outside Aster are discovered but are not automatically registered as build inputs.
+
+The configuration editor reads and updates all comma-separated `#pragma config` fields in the C starter, preserving other settings and comments. C `unsigned int` watches display the full 16-bit value; editing through the watch dialog still writes only one byte. The simulator supports RE3 for 4067 switch testing and RD0/RD1 for 5067 encoder testing. Change one pin at a time and run the firmware between transitions so polling can observe each state.
+
+The 4067 Part b task is the RD4 1 Hz LED; the 5067 Part b task is the RC2 1 ms / 19 ms servo waveform. Physical servo behavior and AD2 measurements must still be checked on the board. The Instruments panel supports waveform zoom and position controls, per-pulse high-time/period ranges, peak-to-peak width variation, pulse and edge CSV exports, and an SVG waveform export. Per-pulse statistics use complete logic-analyzer cycles and the actual sample rate; partial first/last cycles are omitted. The displayed sample interval limits the timing detail you can measure. Scope measurements still show aggregate timing from the full acquired buffer; the plotted scope trace is reduced for display.
 
 ## Analog Discovery 2 instruments
 

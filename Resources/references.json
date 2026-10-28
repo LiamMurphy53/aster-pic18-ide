@@ -1,0 +1,17 @@
+{
+  "lab1": "Lab1_Intro_Micro_DevBoard.pdf",
+  "lab2": "Lab2_Learning_the_PIC_Development_Environment.pdf",
+  "lab3": "Lab3_Basic_Input_and_Output.pdf",
+  "lab4": "Lab4_Timers_LCD_and_Servo.pdf",
+  "lab5": "Lab5_Timers_Interrupts_and_CCP.pdf",
+  "datasheet": "PIC18F87K22.pdf",
+  "board": "easypic-pro-v7-manual-v101.pdf",
+  "assembler": "MPLAB_XC8_PIC_Assembler_User_Guide.pdf",
+  "introC": "Introduction to C.pdf",
+  "xc8Guide": "MPLAB_XC8_C_Compiler_Users_Guide_for_PIC_50002737.pdf",
+  "embeddedC": "XC8 Compiler User's Guide for Embedded Engineers.pdf",
+  "encoders": "NI Tutorial on Encoders.pdf",
+  "rpg": "RPG_3315.pdf",
+  "peatmanLCD": "Peatman CH7 LCD.pdf",
+  "peatmanRPG": "Peatman CH8 - RPG.pdf"
+}

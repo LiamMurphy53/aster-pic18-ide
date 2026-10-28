@@ -52,3 +52,27 @@ The complete backend regression run passed: 21 integration checks, 10 interrupt 
 ## Default clock update — October 1, 2026
 
 Aster's initial clock field, backend defaults, and missing/invalid project-clock fallback now use 16 MHz Fosc. Both new-project templates and bundled examples use 4 MHz instruction frequency, equivalent to 16 MHz Fosc. Explicit existing project clocks continue to take precedence. All 29 stopwatch checks passed, and the native app was rebuilt.
+
+
+## Lab 5 capability audit — October 28, 2026
+
+Reviewed the five-page Fall 2026 handout and both supplied starters. Consulted all seven supporting PDFs: Introduction to C, the XC8 compiler manual (especially types, volatile, configuration, and interrupts), the embedded-engineers XC8 guide, NI encoder tutorial, Bourns 3315 datasheet, and the scanned Peatman LCD/RPG chapters. The older examples target different hardware in places; the course starter and installed PIC18F87K22 device headers determine Aster's register mappings.
+
+Corrected CCP1/CCP2 flag injection to PIR3 bits 1/2 on both desktop backends and updated the watch groups to include PIR3/PIE3/IPR3. Added starter extension-byte and PORTD watch groups. Fixed the configuration editor to read/change/remove individual fields in comma-separated C pragmas while retaining adjacent settings and comments. Added all eight Lab 5 PDF references with a local file picker and remembered folder; PDFs and course source remain outside the distributed app.
+
+The complete Mac backend suite passed, including the new XC8 C production/debug build, full 16-bit counter watch, low-priority Timer0 ISR breakpoint, and CCP flag preservation tests. The Windows backend/shared configuration suite passed all 15 tests on macOS; this is not a Windows hardware test. The native Mac app built successfully. Physical PICkit, servo/LCD/RPG behavior, and AD2 acquisition were not tested. The provided C starter intentionally has unfinished assignments and is not claimed to compile unchanged.
+
+`Tests/Lab5.swift` also accepts a second argument pointing to a local Lab 5 folder to compile and load its unmodified `lab5a_orig.asm` in a disposable project and check extension-byte watches. No course files are committed.
+
+The optional check against the actual local assembly starter also passed production/debug compilation and extension-byte watches. One repeat hit an MDB simulator startup timeout; a subsequent full repeat passed. The Mac ZIP was extracted outside iCloud and passed strict code-signature verification (Finder metadata is reattached to app folders on the synced Desktop).
+
+
+## Complete C and measurement workflow — October 28, 2026
+
+Added explorer actions to create/register C, header, and assembly files; import a starter into the active editor without changing the original; and export source for submission. New files become MPLAB build inputs, with automatic makefile regeneration. C source-line stepping is available beside instruction stepping. Uppercase C/header extensions select C syntax highlighting consistently.
+
+C debug builds now explicitly select the documented XC8 debugger flag for Simulator or PICkit 3 and restore the generated makefile afterward. Microchip's headless generator was observed to emit `-mdebugger=none` even when the project tool was PICkit 3. Real XC8 compilation/linking verified a multi-file C program, a header, PICkit 3 debug flags, simulator loading, 16-bit watches, and timer ISR entry. No physical probe was programmed.
+
+The Instruments panel supports waveform zoom/pan, complete-cycle pulse width and period ranges, peak-to-peak width variation, sample interval, pulse CSV, edge CSV, and SVG waveform export. Statistics use actual logic capture edge positions and sample rate. Partial cycles are excluded. Scope waveform display remains downsampled. Synthetic edge fixtures verify measurement/export calculations; physical AD2 capture is still unverified.
+
+All **35 native WKWebView checks** and **18 Windows/shared JavaScript tests** passed. Native tests exercised C project creation, multi-file editing/building, every field on comma-separated configuration pragmas, C source stepping, and measurement/zoom/export controls, as well as existing assembly workflows. The screenshot was visually inspected. Windows tests additionally verify filename protection, project metadata registration, and restoration of C debug flags on build failure. The Mac application was rebuilt and packaged.

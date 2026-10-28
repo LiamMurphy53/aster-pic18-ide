@@ -83,6 +83,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             panel.directoryURL = URL(fileURLWithPath:NSHomeDirectory()+"/MPLABXProjects")
             panel.beginSheetModal(for:window) { response in self.respond(id,value:response == .OK ? panel.url?.path ?? "" : "") }; return
         }
+        if op == "chooseSource" {
+            let panel = NSOpenPanel();panel.allowsMultipleSelection = false;panel.canChooseDirectories = false
+            panel.message = "Choose the starter to copy into the current editor tab. The original file stays unchanged."
+            panel.beginSheetModal(for:window) { response in
+                guard response == .OK,let url = panel.url else { self.respond(id,value:NSNull());return }
+                do {
+                    guard ["c","h","asm","s","inc"].contains(url.pathExtension.lowercased()) else { throw IDEError("Choose a C, header, or assembly source file.") }
+                    let data = try Data(contentsOf:url);guard data.count <= 2_000_000 else { throw IDEError("Source file is too large.") }
+                    let content = String(data:data,encoding:.utf8) ?? String(data:data,encoding:.isoLatin1) ?? ""
+                    self.respond(id,value:["name":url.lastPathComponent,"content":content])
+                } catch {self.respond(id,error:error.localizedDescription)}
+            };return
+        }
+        if op == "exportText" {
+            guard let content=args["content"] as? String,content.utf8.count <= 4_000_000,let name=args["name"] as? String else {respond(id,error:"Invalid export.");return}
+            let panel=NSSavePanel();panel.nameFieldStringValue=URL(fileURLWithPath:name).lastPathComponent;panel.canCreateDirectories=true
+            panel.beginSheetModal(for:window) { response in
+                guard response == .OK,let url=panel.url else {self.respond(id,value:false);return}
+                do {try content.write(to:url,atomically:true,encoding:.utf8);self.respond(id,value:true)}catch {self.respond(id,error:error.localizedDescription)}
+            };return
+        }
         if op == "chooseNew" {
             let panel = NSSavePanel(); panel.title = "Create PIC18 Project"; panel.nameFieldStringValue = "MyProject.X"; panel.message = "Creates an MPLAB-compatible assembly or XC8 C project."; panel.canCreateDirectories = true
             panel.beginSheetModal(for:window) { response in self.respond(id,value:response == .OK ? panel.url?.path ?? "" : "") }; return
@@ -98,11 +119,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             NSWorkspace.shared.activateFileViewerSelecting([url]); respond(id,value:true); return
         }
         if op == "openDoc" {
-            let allowed = ["lab5":"Lab5_Timers_Interrupts_and_CCP.pdf","datasheet":"PIC18F87K22.pdf","board":"easypic-pro-v7-manual-v101.pdf","lab1":"Lab1_Intro_Micro_DevBoard.pdf","lab2":"Lab2_Learning_the_PIC_Development_Environment.pdf","lab3":"Lab3_Basic_Input_and_Output.pdf","lab4":"Lab4_Timers_LCD_and_Servo.pdf","assembler":"MPLAB_XC8_PIC_Assembler_User_Guide.pdf"]
-            guard let key = args["key"] as? String, let filename = allowed[key] else { respond(id,error:"Unknown reference."); return }
-            let path = key == "lab4" ? resources.appendingPathComponent("References/"+filename).path : key == "assembler" ? core.tc.xc8+"/docs/"+filename : NSHomeDirectory()+"/Downloads/"+filename
-            if FileManager.default.fileExists(atPath:path) { NSWorkspace.shared.open(URL(fileURLWithPath:path)); respond(id,value:true) } else { respond(id,error:"Reference not found: "+filename) }; return
+            guard let data = try? Data(contentsOf:resources.appendingPathComponent("references.json")),
+                  let names = try? JSONDecoder().decode([String:String].self,from:data),
+                  let key = args["key"] as? String, let filename = names[key] else { respond(id,error:"Unknown reference."); return }
+            var folders = [URL]()
+            if let saved = UserDefaults.standard.string(forKey:"referenceFolder") { folders.append(URL(fileURLWithPath:saved)) }
+            if let root = core.project?.root { folders += [root,root.deletingLastPathComponent(),root.deletingLastPathComponent().deletingLastPathComponent()] }
+            folders += [URL(fileURLWithPath:NSHomeDirectory()+"/Downloads"),resources.appendingPathComponent("References")]
+            if key == "assembler" { folders.insert(URL(fileURLWithPath:core.tc.xc8+"/docs"),at:0) }
+            let candidates = folders.flatMap { folder in ([""] + (1...5).map{"lab\($0)"}).map { folder.appendingPathComponent($0).appendingPathComponent(filename) } }
+            if let url = candidates.first(where:{FileManager.default.fileExists(atPath:$0.path)}) {
+                respond(id,value:NSWorkspace.shared.open(url)); return
+            }
+            // Let the user locate their local reference once, without copying course files into the app.
+            let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+            panel.allowedContentTypes = [.pdf]; panel.message = "Locate " + filename
+            panel.beginSheetModal(for:window) { response in
+                guard response == .OK, let url = panel.url else { self.respond(id,value:false); return }
+                UserDefaults.standard.set(url.deletingLastPathComponent().path,forKey:"referenceFolder")
+                self.respond(id,value:NSWorkspace.shared.open(url))
+            }; return
         }
+
         if op == "uiTestDone", testMode {
             let dir = resources.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Tests")
             try? FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
@@ -166,6 +204,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 catch { self.core.onEvent("buildOutput", "Project created. Regenerate Makefiles after setting up the Microchip tools.\n" + error.localizedDescription + "\n") }
             }
             return result
+        case "addSource":
+            guard core.debugger == nil else {throw IDEError("Stop debugging before adding files.")}
+            let project=try core.requireProject(),file=try project.addSource(str("name"))
+            var warning=""
+            do {_ = try core.regenerate()}catch {warning="File added. Use Regenerate Makefiles before building: " + error.localizedDescription}
+            return ["project":project.info(),"path":file.path,"warning":warning]
         case "setWatches":
             let project = try core.requireProject()
             guard str("projectPath") == project.root.path, let names = args["watches"] as? [String] else { throw IDEError("The project changed before its watches could be saved.") }

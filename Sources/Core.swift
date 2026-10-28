@@ -124,6 +124,25 @@ final class PICProject {
         }
         files = discovered.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }
+    func addSource(_ name: String) throws -> URL {
+        guard prebuilt == nil else { throw IDEError("Open a source project first.") }
+        guard name.range(of:"^[A-Za-z_][A-Za-z0-9_-]*\\.(c|h|asm|s|inc)$",options:[.regularExpression,.caseInsensitive]) != nil else { throw IDEError("Use a filename such as timers.c, timers.h, or helpers.asm.") }
+        let ext = URL(fileURLWithPath:name).pathExtension.lowercased()
+        let compiler = configurations.first(where:{$0["name"] == configuration})?["compiler"]
+        guard ext != "c" || compiler == "XC8" else { throw IDEError("Create an XC8 C project to compile C source.") }
+        let target = root.appendingPathComponent(name)
+        guard !FileManager.default.fileExists(atPath:target.path), !files.contains(where:{$0.lastPathComponent.lowercased() == name.lowercased()}) else { throw IDEError("That filename already exists. Open it in the explorer instead.") }
+        let metadata = root.appendingPathComponent("nbproject/configurations.xml")
+        let doc = try XMLDocument(contentsOf:metadata)
+        let folderName = ["h","inc"].contains(ext) ? "HeaderFiles" : "SourceFiles"
+        guard let folder = try doc.nodes(forXPath:"//logicalFolder[@name='\(folderName)']").first as? XMLElement else { throw IDEError("This project's source folder metadata is missing.") }
+        folder.addChild(XMLElement(name:"itemPath",stringValue:name))
+        // Create exclusively and roll back the new file if metadata cannot be saved.
+        try Data().write(to:target,options:.withoutOverwriting)
+        do { try doc.xmlData(options:.nodePrettyPrint).write(to:metadata,options:.atomic) }
+        catch { try? FileManager.default.removeItem(at:target);throw error }
+        declaredFiles.append(target);refreshFiles();return target
+    }
     private var watchesKey: String { "aster.projectWatches." + digest(Data((prebuilt?.standardizedFileURL.resolvingSymlinksInPath().path ?? root.path).utf8)) }
     var savedWatches: [String] { preferences.stringArray(forKey:watchesKey) ?? [] }
     func saveWatches(_ names: [String]) throws {
@@ -446,9 +465,20 @@ final class IDECore {
             // MPLAB 6.20 generates the same PIC-AS flags for SIM and PICkit 3 on this device.
             // PIC-AS 2.46 does not implement XC8 C's -mdebugger option.
             args += ["MP_AS=\"\(tc.assembler)\" -Wa,-a", "MP_LD=\"\(tc.assembler)\""]
-        } else if tool == "PICkit3" && debug && c?["tool"] != "PICkit3" {
-            throw IDEError("For a C hardware debug build, select PICkit 3 in the MPLAB project configuration first.")
         }
+        // MPLAB's headless generator can emit mdebugger=none even for PICkit 3.
+        // Select the compiler's documented target for this build, then restore the generated file.
+        let makeURL=p.root.appendingPathComponent(makefile)
+        var restoreMakefile: (Data,Data)?
+        if debug && !clean && c?["compiler"] == "XC8" {
+            guard ["SIM","PICkit3"].contains(tool) else {throw IDEError("Unsupported C debug target.")}
+            let original=try Data(contentsOf:makeURL),text=String(decoding:original,as:UTF8.self)
+            let pattern="-mdebugger=[A-Za-z0-9]+"
+            guard text.range(of:pattern,options:.regularExpression) != nil else {throw IDEError("Regenerate Makefiles before building this C debug configuration.")}
+            let updated=Data(text.replacingOccurrences(of:pattern,with:"-mdebugger="+(tool == "SIM" ? "none" : "pickit3"),options:.regularExpression).utf8)
+            if original != updated {try updated.write(to:makeURL,options:.atomic);restoreMakefile=(original,updated)}
+        }
+        defer {if let (original,updated)=restoreMakefile,(try? Data(contentsOf:makeURL)) == updated {try? original.write(to:makeURL,options:.atomic)}}
         onEvent("buildStart",["clean":clean,"debug":debug]); lastBuild = [:]
         let started = Date()
         onEvent("buildOutput","\(clean ? "Cleaning" : "Building") \(p.name) · \(p.configuration) · \(debug ? "debug" : "production")\n")
@@ -644,7 +674,7 @@ final class IDECore {
     }
     func triggerInterrupt(_ source: String) throws -> String {
         guard let s = debugger, debugTool == "SIM", !s.running else { throw IDEError("Start and pause the simulator to raise an interrupt flag.") }
-        let sources: [String:(String,Int)] = ["INT0":("INTCON",0x02),"INT1":("INTCON3",0x01),"INT2":("INTCON3",0x02),"TMR0":("INTCON",0x04),"TMR1":("PIR1",0x01),"TMR2":("PIR1",0x02),"CCP1":("PIR1",0x04),"CCP2":("PIR2",0x01),"ADC":("PIR1",0x40)]
+        let sources: [String:(String,Int)] = ["INT0":("INTCON",0x02),"INT1":("INTCON3",0x01),"INT2":("INTCON3",0x02),"TMR0":("INTCON",0x04),"TMR1":("PIR1",0x01),"TMR2":("PIR1",0x02),"CCP1":("PIR3",0x02),"CCP2":("PIR3",0x04),"ADC":("PIR1",0x40)]
         guard let (register,mask) = sources[source] else { throw IDEError("Unknown interrupt source.") }
         let output = try s.checked("print /x \(register)")
         guard let m = match(output,"=\\s*([0-9a-fA-F]+)"), let value = Int(m[1],radix:16) else { throw IDEError("Could not read the interrupt flag register.") }
