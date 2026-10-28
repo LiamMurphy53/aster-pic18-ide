@@ -11,6 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var busy = false
     var testMode = false
     let resources = Bundle.main.resourceURL!
+    var bridge: AsterBridge?
+    var bridgeMenuItem: NSMenuItem?
+    let captureLock = NSLock()
+    var capture: String?
     func applicationDidFinishLaunching(_ notification: Notification) {
         testMode = CommandLine.arguments.contains("--ui-test")
         let content = WKUserContentController(); content.add(self,name:"aster")
@@ -26,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         window.setFrameAutosaveName("AsterMainWindow"); window.center()
         window.appearance = NSAppearance(named:.darkAqua)
         menu()
-        core.onEvent = { [weak self] name,value in self?.event(name,value) }
+        core.onEvent = { [weak self] name,value in self?.captureOutput(name,value); self?.event(name,value) }
         core.onConfirmation = { [weak self] message in
             // MDB runs on the operation queue; keep the window responsive while
             // its command waits for the user's answer on the main queue.
@@ -51,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         core.serial.onData = { [weak self] text in self?.event("serialData",text) }
         web.loadFileURL(resources.appendingPathComponent("Web/index.html"),allowingReadAccessTo:resources)
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps:true)
+        if !testMode { restoreBridge() }
     }
     func menu() {
         let bar = NSMenu(); NSApp.mainMenu = bar
@@ -60,6 +65,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         for (name,entries) in [("File",[("Open Project…","open","o"),("New Project…","new","n"),("Save","save","s"),("Save All","saveAll","S")]),("Edit",[("Undo","undo:","z"),("Redo","redo:","Z"),("Cut","cut:","x"),("Copy","copy:","c"),("Paste","paste:","v"),("Select All","selectAll:","a"),("Find","find","f")]),("Project",[("Build","build","b"),("Clean","clean",""),("Regenerate Makefiles","regenerate",""),("Reveal in Finder","reveal",""),("Toolchain Settings","settings",",")]),("Debug",[("Start Session","debug","d"),("Continue / Pause","toggleRun",""),("Step Instruction","stepi",""),("Step Over","next",""),("Reset","reset",""),("Stop Session","stop","")])] {
             let item = NSMenuItem(); bar.addItem(item); let submenu = NSMenu(title:name); item.submenu = submenu
             for (title,action,key) in entries { let m = NSMenuItem(title:title,action:action.hasSuffix(":") ? NSSelectorFromString(action) : #selector(menuAction(_:)),keyEquivalent:key); if !action.hasSuffix(":") { m.target = self; m.representedObject = action }; submenu.addItem(m) }
+        }
+        if let project = bar.items.first(where:{ $0.submenu?.title == "Project" })?.submenu {
+            project.addItem(.separator())
+            let toggle = NSMenuItem(title:"Claude Bridge",action:#selector(toggleBridge),keyEquivalent:""); toggle.target = self; project.addItem(toggle); bridgeMenuItem = toggle
+            project.addItem(withTitle:"Choose Bridge Folder…",action:#selector(chooseBridgeFolder),keyEquivalent:"").target = self
+            project.addItem(withTitle:"Reveal Bridge Folder",action:#selector(revealBridgeFolder),keyEquivalent:"").target = self
         }
         let wi = NSMenuItem(); bar.addItem(wi); let wm = NSMenu(title:"Window"); wi.submenu = wm; NSApp.windowsMenu = wm
         wm.addItem(withTitle:"Minimize",action:#selector(NSWindow.miniaturize(_:)),keyEquivalent:"m")
@@ -176,7 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             if let path = defaults.string(forKey:"xc8") { core.tc.xc8 = path }
             let root = NSHomeDirectory()+"/MPLABXProjects"
             let found = ((try? FileManager.default.contentsOfDirectory(atPath:root)) ?? []).filter{$0.hasSuffix(".X")}.map{root+"/"+$0}
-            return ["tools":core.tc.status(),"recent":Array(Set((defaults.stringArray(forKey:"recent") ?? [])+found)).sorted(),"device":try deviceData(),"ports":core.serial.ports(),"initialProject":CommandLine.arguments.firstIndex(of:"--open-project").flatMap { CommandLine.arguments.indices.contains($0+1) ? CommandLine.arguments[$0+1] : nil } ?? "","testMode":testMode,"testProject":testMode ? resources.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Tests/UIProject.X").path : ""]
+            return ["bridge":bridgeState(),"tools":core.tc.status(),"recent":Array(Set((defaults.stringArray(forKey:"recent") ?? [])+found)).sorted(),"device":try deviceData(),"ports":core.serial.ports(),"initialProject":CommandLine.arguments.firstIndex(of:"--open-project").flatMap { CommandLine.arguments.indices.contains($0+1) ? CommandLine.arguments[$0+1] : nil } ?? "","testMode":testMode,"testProject":testMode ? resources.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Tests/UIProject.X").path : ""]
         case "open":
             let result = try core.open(str("path")); let defaults = UserDefaults.standard
             var recent = defaults.stringArray(forKey:"recent") ?? []; recent.removeAll{$0 == str("path")}; recent.insert(str("path"),at:0); if !testMode { defaults.set(Array(recent.prefix(12)),forKey:"recent") }
@@ -250,6 +261,145 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         default: throw IDEError("Unknown operation: "+op)
         }
     }
+    // MARK: claude bridge
+
+    func bridgeState() -> [String:Any] { ["enabled":bridge != nil,"folder":bridge?.folder.path ?? UserDefaults.standard.string(forKey:"bridgeFolder") ?? ""] }
+    func restoreBridge() {
+        let args = CommandLine.arguments, defaults = UserDefaults.standard
+        if let i = args.firstIndex(of:"--bridge"), args.indices.contains(i+1) { startBridge(URL(fileURLWithPath:(args[i+1] as NSString).expandingTildeInPath)); return }
+        if defaults.bool(forKey:"bridgeEnabled"), let path = defaults.string(forKey:"bridgeFolder") { startBridge(URL(fileURLWithPath:path)) }
+    }
+    func startBridge(_ folder: URL) {
+        bridge?.stop(); bridge = nil
+        let b = AsterBridge(folder:folder,version:"0.1.0")
+        b.handler = { [weak self] op,args,reply in
+            guard let self else { reply(nil,"Aster is closing.",""); return }
+            self.handleBridge(op,args,reply)
+        }
+        do { try b.start() } catch {
+            let alert = NSAlert(); alert.messageText = "Claude Bridge could not start"; alert.informativeText = error.localizedDescription; alert.runModal(); return
+        }
+        bridge = b
+        UserDefaults.standard.set(folder.path,forKey:"bridgeFolder"); UserDefaults.standard.set(true,forKey:"bridgeEnabled")
+        bridgeChanged()
+    }
+    func stopBridge() {
+        bridge?.stop(); bridge = nil
+        UserDefaults.standard.set(false,forKey:"bridgeEnabled")
+        bridgeChanged()
+    }
+    func bridgeChanged() {
+        bridgeMenuItem?.state = bridge == nil ? .off : .on
+        event("bridgeState",bridgeState())
+        updateBridgeStatus()
+    }
+    func updateBridgeStatus() {
+        guard let bridge else { return }
+        let p = core.project
+        bridge.update(["project":p?.root.path ?? "","projectName":p?.name ?? "","debugging":core.debugger != nil,"running":core.debugger?.running ?? false,"tool":core.debugTool])
+    }
+    @objc func toggleBridge() {
+        if bridge != nil { stopBridge(); return }
+        if let path = UserDefaults.standard.string(forKey:"bridgeFolder") { startBridge(URL(fileURLWithPath:path)) } else { chooseBridgeFolder() }
+    }
+    @objc func chooseBridgeFolder() {
+        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true; panel.allowsMultipleSelection = false
+        panel.prompt = "Use Folder"; panel.message = "Choose a folder Claude can reach. Aster reads requests from it and writes results back."
+        if let path = UserDefaults.standard.string(forKey:"bridgeFolder") { panel.directoryURL = URL(fileURLWithPath:path) }
+        panel.beginSheetModal(for:window) { response in if response == .OK, let url = panel.url { self.startBridge(url) } }
+    }
+    @objc func revealBridgeFolder() {
+        guard let path = bridge?.folder.path ?? UserDefaults.standard.string(forKey:"bridgeFolder") else { NSSound.beep(); return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath:path)])
+    }
+    func captureOutput(_ name: String,_ value: Any) {
+        guard name == "buildOutput" || name == "debugOutput", let text = value as? String else { return }
+        captureLock.lock(); if capture != nil { capture! += text; if capture!.count > 400_000 { capture = String(capture!.suffix(200_000)) } }; captureLock.unlock()
+    }
+    // ask the main thread a yes/no question from the operation queue
+    func confirmFromWorker(_ title: String,_ message: String) -> Bool {
+        let answer = DispatchSemaphore(value:0); var accepted = false
+        DispatchQueue.main.async {
+            NSApp.requestUserAttention(.criticalRequest)
+            let alert = NSAlert(); alert.alertStyle = .warning; alert.messageText = title; alert.informativeText = message
+            alert.addButton(withTitle:"Allow"); alert.addButton(withTitle:"Cancel")
+            alert.beginSheetModal(for:self.window) { response in accepted = response == .alertFirstButtonReturn; answer.signal() }
+        }
+        answer.wait(); return accepted
+    }
+    func uiHasUnsavedEdits() -> Bool {
+        let answer = DispatchSemaphore(value:0); var dirty = false
+        DispatchQueue.main.async {
+            self.web.evaluateJavaScript("window.asterHasUnsaved?.() === true") { value,_ in dirty = value as? Bool ?? false; answer.signal() }
+        }
+        _ = answer.wait(timeout:.now()+3); return dirty
+    }
+    func waitStop(_ args: [String:Any]) throws -> Any {
+        let timeout = min(max(args["timeout"] as? Double ?? 10,0.05),150)
+        let deadline = Date().addingTimeInterval(timeout)
+        while let s = core.debugger, s.running, Date() < deadline { Thread.sleep(forTimeInterval:0.05) }
+        guard let s = core.debugger else { throw IDEError("Start a debug session first.") }
+        if s.running { return ["state":"running","timedOut":true] }
+        core.onEvent("debugState",["state":"paused","tool":core.debugTool])
+        return try core.inspect(args["names"] as? [String] ?? ["WREG","STATUS","BSR"])
+    }
+    func bridgeScreenshot(_ reply: @escaping AsterBridge.Reply) {
+        DispatchQueue.main.async {
+            self.web.takeSnapshot(with:nil) { image,error in
+                guard let folder = self.bridge?.screenshots, let image, let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data:tiff), let png = rep.representation(using:.png,properties:[:]) else {
+                    reply(nil,error?.localizedDescription ?? "Could not capture the Aster window.",""); return
+                }
+                do {
+                    try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+                    let url = folder.appendingPathComponent("aster-\(Int(Date().timeIntervalSince1970*1000)).png")
+                    try png.write(to:url); reply(["path":url.path,"width":rep.pixelsWide,"height":rep.pixelsHigh],nil,"")
+                } catch { reply(nil,error.localizedDescription,"") }
+            }
+        }
+    }
+    // ops whose results the web ui uses to stay in sync with what claude did
+    static let bridgeSyncOps: Set<String> = ["open","new","debugStart","debugAction","inspect","waitStop","resetStopwatch","breakpoint","addSource","configuration","project"]
+    static let bridgeUIActions: Set<String> = ["build","clean","debug","stop","stepi","next","reset","toggleRun","saveAll","regenerate"]
+    func handleBridge(_ op: String,_ args: [String:Any],_ reply: @escaping AsterBridge.Reply) {
+        event("bridge",["phase":"start","op":op])
+        let finish: AsterBridge.Reply = { [weak self] value,error,output in
+            guard let self else { reply(value,error,output); return }
+            let synced: Any = error == nil && AppDelegate.bridgeSyncOps.contains(op) ? (value ?? NSNull()) : NSNull()
+            self.event("bridge",["phase":"end","op":op,"args":args,"ok":error == nil,"error":error ?? "","value":synced])
+            self.updateBridgeStatus()
+            reply(value,error,output)
+        }
+        switch op {
+        case "ping":
+            finish(["bridge":bridgeState(),"tools":core.tc.status(),"project":core.project.map { $0.info() as Any } ?? NSNull(),"debugging":core.debugger != nil,"running":core.debugger?.running ?? false],nil,"")
+        case "screenshot":
+            bridgeScreenshot(finish)
+        case "uiAction":
+            let name = args["action"] as? String ?? ""
+            guard AppDelegate.bridgeUIActions.contains(name) else { finish(nil,"Unsupported UI action. Use one of: "+AppDelegate.bridgeUIActions.sorted().joined(separator:", "),""); return }
+            event("menu",name); finish(true,nil,"")
+        case "settings","bootstrap","save":
+            finish(nil,"\(op) is not available through the bridge. Edit files on disk instead of using save.","")
+        default:
+            worker.async {
+                do {
+                    if op == "open" || op == "new", self.uiHasUnsavedEdits() { throw IDEError("Aster has unsaved edits. Save them before switching projects.") }
+                    if op == "program" {
+                        guard self.confirmFromWorker("Claude wants to program the board","Build and program the production image with PICkit 3 (tool index \(args["index"] as? Int ?? 0)). The EasyPIC board must be on its own power supply.") else { throw IDEError("Programming was declined in Aster.") }
+                    }
+                    if op == "debugStart", (args["tool"] as? String ?? "SIM") != "SIM" {
+                        guard self.confirmFromWorker("Claude wants to debug on hardware","Start a PICkit 3 debug session on the connected board. The EasyPIC board must be on its own power supply.") else { throw IDEError("Hardware debugging was declined in Aster.") }
+                    }
+                    self.captureLock.lock(); self.capture = ""; self.captureLock.unlock()
+                    defer { self.captureLock.lock(); self.capture = nil; self.captureLock.unlock() }
+                    let value = try op == "waitStop" ? self.waitStop(args) : self.perform(op,args)
+                    self.captureLock.lock(); let output = op == "build" || op == "clean" ? "" : (self.capture ?? ""); self.captureLock.unlock()
+                    finish(value,nil,output)
+                } catch { finish(nil,error.localizedDescription,"") }
+            }
+        }
+    }
+
     func deviceData() throws -> Any {
         let url = resources.appendingPathComponent("device.json")
         return try JSONSerialization.jsonObject(with:Data(contentsOf:url))
@@ -262,7 +412,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { if closing { return true }; event("requestClose",true); return false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply { if closing { return .terminateNow }; event("requestClose",true); return .terminateCancel }
-    func applicationWillTerminate(_ notification: Notification) { core.shutdown() }
+    func applicationWillTerminate(_ notification: Notification) { bridge?.stop(); core.shutdown() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 

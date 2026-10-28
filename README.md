@@ -176,3 +176,33 @@ The 4067 Part b task is the RD4 1 Hz LED; the 5067 Part b task is the RC2 1 ms /
 The **Instruments** panel provides single-shot captures from Digilent WaveForms SDK: Scope 1/2 as an oscilloscope or DIO 0–15 as a logic analyzer. Aster displays the waveform and calculates period, high time, frequency, and duty cycle when at least two rising edges are captured. Select a 50 ms window for Lab 5 RC2 pulses or 2.2 s for the 1 Hz RD4 LED. Measurements use the actual sample rate; choose a short window for finer timing resolution. Connect AD2 ground to board ground.
 
 Install Digilent WaveForms on the same computer; Aster loads its SDK at runtime and does not bundle it. Close a WaveForms session using the AD2 before capturing in Aster. The Mac build includes its capture helper. Windows release builds compile the helper with Visual Studio C tools and package it beside the app; local Windows source builds need the same helper in `Windows/ad2/`. Hardware acquisition still needs validation with a connected AD2.
+
+## Claude bridge (macOS)
+
+The bridge lets an agent such as Claude drive Aster through a shared folder, using the same operations as the interface: open or create projects, build, start the simulator, step, set breakpoints, read watches, memory and the stopwatch, and capture the window. It is useful when the agent can reach your files but cannot run Microchip's tools itself.
+
+Turn it on with **Project → Claude Bridge** and choose a folder the agent can reach. Aster remembers the folder and the setting. You can also start it with `open -a Aster --args --bridge ~/path/to/folder`. While it is on, the status bar shows **Claude bridge**.
+
+Each request is a JSON file, `requests/<id>.json`, containing `{"op": "...", "args": {...}}`. Aster answers in `responses/<id>.json` with `ok`, `value` or `error`, `ms`, and captured build or debugger `output`. `status.json` is refreshed every second, so a client can tell whether Aster is listening. Old responses and screenshots are removed after an hour.
+
+`Tools/aster-bridge.cjs` sends one request and prints the reply:
+
+```
+node Tools/aster-bridge.cjs ping
+node Tools/aster-bridge.cjs open '{"path":"/Users/you/MPLABXProjects/lab5a.X"}'
+node Tools/aster-bridge.cjs build
+node Tools/aster-bridge.cjs debugStart '{"tool":"SIM"}'
+node Tools/aster-bridge.cjs breakpoint '{"path":"/Users/you/MPLABXProjects/lab5a.X/main.asm","line":120}'
+node Tools/aster-bridge.cjs debugAction '{"action":"continue"}'
+node Tools/aster-bridge.cjs waitStop '{"timeout":10,"names":["CCPR1L","TMR1X"]}'
+node Tools/aster-bridge.cjs screenshot
+```
+
+Operations are the interface's operations (`open`, `new`, `build`, `clean`, `regenerate`, `debugStart`, `debugAction`, `inspect`, `breakpoint`, `memory`, `writeRegister`, `setPin`, `triggerInterrupt`, `resetStopwatch`, `fullDisassembly`, `debugCommand`, `program`, serial and AD2 capture), plus bridge-only operations:
+
+- `ping`: tools, open project and debugger state.
+- `waitStop`: waits for a running target to stop, then returns the inspected registers. Use after `continue`.
+- `screenshot`: saves a PNG of the Aster window under `screenshots/`.
+- `uiAction`: runs an interface action (`build`, `debug`, `stop`, `stepi`, `next`, `reset`, `toggleRun`, `saveAll`, `regenerate`, `clean`) as if it came from the menu.
+
+Safeguards: `program` and PICkit 3 debugging always ask for confirmation in Aster. `settings` and `save` are refused, so the agent edits source files on disk. When it does, Aster reloads open tabs that have no unsaved edits, and opening another project is refused while you have unsaved edits. The bridge is off by default and is not available in the Windows edition.

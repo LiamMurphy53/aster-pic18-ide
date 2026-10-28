@@ -19,7 +19,7 @@ for ARCH in "${ARCHITECTURES[@]}"; do
     BINARY="$STAGING/Aster-$ARCH"
     xcrun swiftc -swift-version 5 -target "$ARCH-apple-macos13.0" -O \
         -module-cache-path "$STAGING/module-cache" -framework AppKit -framework WebKit -framework CryptoKit \
-        Sources/Core.swift Sources/App.swift -o "$BINARY"
+        Sources/Core.swift Sources/Bridge.swift Sources/App.swift -o "$BINARY"
     BINARIES+=("$BINARY")
     AD2_BINARY="$STAGING/aster-ad2-$ARCH"
     xcrun clang -std=c11 -D_DEFAULT_SOURCE -O2 -target "$ARCH-apple-macos13.0" Sources/ad2_capture.c -o "$AD2_BINARY" -lm
