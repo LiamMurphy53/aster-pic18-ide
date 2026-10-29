@@ -137,6 +137,8 @@ const ad2Colors=['#f2c14e','#6cb6ff','#9aebcb','#e88fd0','#c3e88d','#ff8a80','#8
 const ad2Rows=[['period','Period','time'],['frequency','Frequency','freq'],['high','Positive width','time'],['low','Negative width','time'],['duty','Duty cycle','pct'],['rise','Rise time (10–90%)','edge',1],['fall','Fall time (90–10%)','edge',1],['min','Minimum','volt',1],['max','Maximum','volt',1],['average','Average','volt',1],['peak','Peak-to-peak','volt',1]];
 const ad2VDivs=[.01,.02,.05,.1,.2,.5,1,2,5,10],ad2TDivs=[1e-6,2e-6,5e-6,1e-5,2e-5,5e-5,1e-4,2e-4,5e-4,1e-3,2e-3,5e-3,.01,.02,.05,.1,.2];
 let ad2G=null,ad2Drag=null,ad2Width=0;
+// the graph height follows the window, so redraw when only the height changes
+if(INSTRUMENTS){let h=innerHeight;addEventListener('resize',()=>{if(innerHeight!==h){h=innerHeight;drawCapture();}});}
 const ad2Resize=typeof ResizeObserver==='function'?new ResizeObserver(entries=>{const w=Math.round(entries[0]?.contentRect.width||0);if(w&&w!==ad2Width){ad2Width=w;drawCapture();}}):null;
 const ad2Opt=(value,label,on)=>`<option value="${value}" ${on?'selected':''}>${label}</option>`;
 function ad2Name(mode,ch){return mode==='scope'?'Scope '+(ch+1):'DIO '+ch;}
@@ -169,9 +171,23 @@ function ad2RunState(){const b=$('#ad2Run');if(!b)return;b.textContent=S.ad2Runn
 async function ad2Start(){try{S.ad2Frames=0;const r=await api('ad2Run',ad2Settings());S.ad2RunId=r.run;S.ad2Running=true;}catch(e){S.ad2Running=false;toast(e.message,true);}ad2RunState();}
 async function ad2Stop(){S.ad2Running=false;ad2RunState();try{await api('ad2Stop');}catch(e){toast(e.message,true);}}
 function ad2Changed(rerender){if(rerender)renderPanel();if(S.ad2Running)ad2Start();}
+// the graph fills most of the instruments window, with room left for the buttons and readout under it
+function ad2Room(){return INSTRUMENTS?Math.max(320,innerHeight-250):140;}
+// before the first capture, an empty screen with the current time base, volts/div and channel names
+function emptyGraph(width=1000){
+ const M=AsterMeasurements,scope=S.ad2Mode==='scope',chans=S.ad2Channels.length?S.ad2Channels:[0],W=Math.max(360,Math.round(width||1000)),L=scope?48:52,R=scope&&chans.length>1?48:6,axis=18,H=Math.round(ad2Room()),plotH=H-axis,pw=W-L-R,span=S.ad2Span,f=n=>n.toFixed(1),div=plotH/10;
+ let grid='',labels='';
+ for(let d=0;d<=10;d++){const px=L+d/10*pw,t=d/10*span;grid+=`<line x1="${f(px)}" y1="0" x2="${f(px)}" y2="${plotH}" stroke="${d===5?'#ffffff38':'#ffffff1c'}"/>`;if(d<10)labels+=`<text x="${f(px+3)}" y="${H-5}" fill="#b8c6d4" font-size="10">${M.tick(t,span/10,span)}</text>`;}
+ if(scope)for(let d=0;d<=10;d++){const y=d*div;grid+=`<line x1="${L}" y1="${f(y)}" x2="${L+pw}" y2="${f(y)}" stroke="${d===5?'#ffffff38':'#ffffff1c'}"/>`;
+  if(d%2===0)chans.slice(0,2).forEach((ch,k)=>{const s=S.ad2Chan[ch]||{vdiv:1,center:0};labels+=`<text x="${k?L+pw+4:L-4}" y="${f(Math.max(9,Math.min(plotH-2,y+3)))}" fill="${ad2Colors[k]}" font-size="9" text-anchor="${k?'start':'end'}">${M.volts(+(s.center+(5-d)*s.vdiv).toFixed(6),s.vdiv/10)}</text>`;});}
+ else{const lane=plotH/chans.length;chans.forEach((ch,k)=>{const top=k*lane;labels+=`<text x="5" y="${f(top+lane/2+4)}" fill="${ad2Colors[(k+2)%ad2Colors.length]}" font-size="10" font-weight="600">${ad2Name('logic',ch)}</text>`;if(k)grid+=`<line x1="0" y1="${f(top)}" x2="${W}" y2="${f(top)}" stroke="#ffffff14"/>`;});}
+ if(scope)chans.forEach((ch,k)=>{labels+=`<text x="${L+6+k*110}" y="${plotH-5}" fill="${ad2Colors[k]}" font-size="10" font-weight="600">${ad2Name('scope',ch)}</text>`;});
+ labels+=`<text x="${f(L+pw/2)}" y="${f(plotH/2-8)}" fill="#8796a6" font-size="13" text-anchor="middle">No capture yet</text><text x="${f(L+pw/2)}" y="${f(plotH/2+12)}" fill="#6b7a8a" font-size="11" text-anchor="middle">Press Run or Single to acquire from the Analog Discovery</text>`;
+ return `<svg xmlns="http://www.w3.org/2000/svg" class="instrument-graph" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Empty ${scope?'oscilloscope':'logic analyzer'} screen"><rect width="${W}" height="${H}" fill="#19222e"/><rect width="${L}" height="${plotH}" fill="#151d27"/>${R>6?`<rect x="${L+pw}" width="${R}" height="${plotH}" fill="#151d27"/>`:''}${grid}${labels}</svg>`;
+}
 function instrumentGraph(c,width=1000){
- if(!c)return '<div class="panel-empty">Capture a signal to see its waveform.</div>';
- const M=AsterMeasurements,scope=c.mode==='scope',traces=c.traces,W=Math.max(360,Math.round(width||1000)),L=scope?48:52,R=scope&&traces.length>1?48:6,axis=18,room=INSTRUMENTS?Math.max(220,Math.round(innerHeight*.45)):140,lane=scope?0:Math.max(20,Math.min(INSTRUMENTS?90:34,room/traces.length)),H=scope?Math.max(200,room):Math.round(traces.length*lane+axis+6),plotH=H-axis,pw=W-L-R;
+ if(!c)return emptyGraph(width);
+ const M=AsterMeasurements,scope=c.mode==='scope',traces=c.traces,W=Math.max(360,Math.round(width||1000)),L=scope?48:52,R=scope&&traces.length>1?48:6,axis=18,room=ad2Room(),lane=scope?0:INSTRUMENTS?Math.max(40,(room-axis-6)/traces.length):Math.max(20,Math.min(34,room/traces.length)),H=scope?Math.max(200,room):Math.round(traces.length*lane+axis+6),plotH=H-axis,pw=W-L-R;
  const v=S.ad2View||{start:0,span:c.span},start=v.start,span=v.span,end=start+span,x=t=>L+(t-start)/span*pw,f=n=>n.toFixed(1),res=ad2Res(c),div=plotH/10,clampY=y=>Math.max(-2,Math.min(plotH+2,y));
  const scale=ch=>S.ad2Chan[ch]||{vdiv:1,center:0},ys=ch=>{const s=scale(ch);return u=>plotH/2-(u-s.center)/s.vdiv*div;},mt=traces.find(t=>t.channel===S.ad2Measure)||traces[0],ms=scale(mt.channel);
  ad2G={W,H,L,R,pw,plotH,start,span,yv:ys(mt.channel),volt:py=>ms.center+(plotH/2-py)/div*ms.vdiv,vmin:ms.center-5*ms.vdiv,vmax:ms.center+5*ms.vdiv};
@@ -189,7 +205,7 @@ function instrumentGraph(c,width=1000){
   const tt=traces.find(t=>t.channel===c.trigger);
   if(c.trigger>=0){const inv=tt?tt.inverted:!!S.ad2Chan[c.trigger]?.invert,lv=inv?-c.level:c.level,y=clampY(ys(c.trigger)(lv));marks+=`<line class="ad2-trigger-level" x1="${L}" y1="${f(y)}" x2="${L+pw}" y2="${f(y)}" stroke="#f0884e99" stroke-dasharray="6 4"/>`;labels+=`<path d="M${L},${f(y-5)} L${L+8},${f(y)} L${L},${f(y+5)}z" fill="#f0884e"><title>Trigger level ${M.volts(lv)} on ${ad2Name('scope',c.trigger)}</title></path>`;}
  }else traces.forEach((t,k)=>{
-  const top=k*lane,hi=top+5,lo=top+lane-5,color=ad2Colors[(k+2)%ad2Colors.length];let p='',previous=null;
+  const pad=Math.max(5,lane*.18),top=k*lane,hi=top+pad,lo=top+lane-pad,color=ad2Colors[(k+2)%ad2Colors.length];let p='',previous=null;
   for(const [sample,level] of t.values){const s=sample/c.sampleRate,y=level?hi:lo;if(s<start){previous=y;continue;}if(!p&&previous!==null)p=`M${L},${previous}`;if(s>end)break;if(previous===null)p=`M${f(x(s))},${y}`;else p+=` L${f(x(s))},${previous} L${f(x(s))},${y}`;previous=y;}
   if(!p&&previous!==null)p=`M${L},${previous}`;if(previous!==null)p+=` L${L+pw},${previous}`;
   paths+=`<path d="${p}" fill="none" stroke="${color}" stroke-width="1.5"/>`;labels+=`<text x="5" y="${f(top+lane/2+4)}" fill="${color}" font-size="10" font-weight="600">${ad2Name('logic',t.channel)}</text>${k?`<line x1="0" y1="${top}" x2="${W}" y2="${top}" stroke="#ffffff14"/>`:''}`;
