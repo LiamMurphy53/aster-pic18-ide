@@ -64,6 +64,53 @@ final class CommandRunner {
     }
 }
 
+// analog discovery helper: one-shot captures, or a "run" process that prints one json frame per line until its stdin closes
+final class AD2Session {
+    private let lock = NSLock()
+    private var process: Process?
+    private var input: Pipe?
+    private var runID = 0
+    static func arguments(_ a: [String:Any]) throws -> [String] {
+        func number(_ key: String) -> Double? { (a[key] as? NSNumber)?.doubleValue }
+        let mode = a["mode"] as? String ?? "", span = number("span") ?? 0, top = mode == "scope" ? 1 : 15
+        let channels = (a["channels"] as? [Any] ?? [a["channel"] ?? 0]).compactMap { ($0 as? NSNumber)?.intValue }
+        let trigger = number("trigger").map { Int($0) } ?? channels.first ?? 0, edge = a["edge"] as? String ?? "rise", triggerMode = a["triggerMode"] as? String ?? "auto"
+        let level = number("level") ?? 1.5, position = number("position") ?? 10, range = number("range") ?? 50
+        guard ["scope","logic"].contains(mode), span >= 0.001, span <= 3, !channels.isEmpty, Set(channels).count == channels.count, channels.allSatisfy({ (0...top).contains($0) }), (-1...top).contains(trigger),
+              ["rise","fall"].contains(edge), ["auto","normal"].contains(triggerMode), abs(level) <= 25, (0...100).contains(position), [5,50].contains(range) else { throw IDEError("Invalid Analog Discovery capture settings.") }
+        return [mode,String(span),"channels="+channels.map(String.init).joined(separator:","),"trigger="+(trigger < 0 ? "none" : String(trigger)),"edge="+edge,"level="+String(level),"position="+String(position),"mode="+triggerMode,"range="+String(Int(range))]
+    }
+    var running: Bool { lock.lock(); defer { lock.unlock() }; return process?.isRunning ?? false }
+    func start(_ helper: String, _ arguments: [String], frame: @escaping (Int,Any)->Void, ended: @escaping (Int,String)->Void) throws -> Int {
+        stop(wait:true)
+        let p = Process(), out = Pipe(), err = Pipe(), inp = Pipe()
+        p.executableURL = URL(fileURLWithPath:helper); p.arguments = ["run"]+arguments
+        p.standardOutput = out; p.standardError = err; p.standardInput = inp
+        lock.lock(); runID += 1; let id = runID; process = p; input = inp; lock.unlock()
+        try p.run()
+        DispatchQueue.global().async {
+            var buffer = Data()
+            while true {
+                let chunk = out.fileHandleForReading.availableData; if chunk.isEmpty { break }; buffer.append(chunk)
+                while let nl = buffer.firstIndex(of:10) { let line = Data(buffer[buffer.startIndex..<nl]); buffer.removeSubrange(buffer.startIndex...nl); if let object = try? JSONSerialization.jsonObject(with:line) { frame(id,object) } }
+            }
+            p.waitUntilExit()
+            let message = String(decoding:err.fileHandleForReading.readDataToEndOfFile(),as:UTF8.self).trimmingCharacters(in:.whitespacesAndNewlines)
+            self.lock.lock(); if self.process === p { self.process = nil; self.input = nil }; self.lock.unlock()
+            ended(id, p.terminationStatus == 0 ? "" : message.isEmpty ? "Analog Discovery capture stopped." : message)
+        }
+        return id
+    }
+    // closing stdin asks the helper to close the device; terminate only if it ignores that
+    func stop(wait: Bool = false) {
+        lock.lock(); let p = process, inp = input; process = nil; input = nil; lock.unlock()
+        guard let p, p.isRunning else { return }
+        try? inp?.fileHandleForWriting.close()
+        DispatchQueue.global().asyncAfter(deadline:.now()+2) { if p.isRunning { p.terminate() } }
+        if wait { let deadline = Date()+3; while p.isRunning && Date() < deadline { usleep(20_000) } }
+    }
+}
+
 final class PICProject {
     let root: URL
     private let preferences: UserDefaults

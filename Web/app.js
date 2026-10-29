@@ -8,7 +8,7 @@ icons();
 let seq=0,pending=new Map();
 function api(op,args={}){return new Promise((resolve,reject)=>{const id=String(++seq);pending.set(id,{resolve,reject});if(!window.webkit?.messageHandlers?.aster){pending.delete(id);reject(Error('Open Aster.app to connect to your local tools.'));return;}window.webkit.messageHandlers.aster.postMessage({id,op,args});});}
 window.asterResponse=(id,value,error)=>{const p=pending.get(id);if(!p)return;pending.delete(id);error?p.reject(Error(error)):p.resolve(value);};
-let S={ad2Status:null,ad2Capture:null,ad2Mode:'logic',ad2Span:0.05,ad2Channel:0,project:null,files:new Map(),active:null,view:'files',panel:'output',busy:false,debug:'disconnected',location:{},values:{},previous:{},watches:[],breakpoints:[],stopwatch:null,diagnostics:[],output:'',debugOutput:'',serialOutput:'',memoryOutput:'',ports:[],serial:false,baud:19200,port:'',recent:[],device:{registers:[],configs:[],pins:[]},tools:[],details:null};
+let S={ad2Status:null,ad2Capture:null,ad2Mode:'logic',ad2Span:0.05,ad2Channels:[0],ad2Trigger:{source:0,edge:'rise',level:1.5,position:10,mode:'auto'},ad2Range:50,ad2Measure:0,ad2View:null,ad2Cursor:{x1:null,x2:null,y1:null,y2:null,show:true,volts:false},ad2Snap:true,ad2Edges:[],ad2Running:false,ad2RunId:0,ad2Frames:0,project:null,files:new Map(),active:null,view:'files',panel:'output',busy:false,debug:'disconnected',location:{},values:{},previous:{},watches:[],breakpoints:[],stopwatch:null,diagnostics:[],output:'',debugOutput:'',serialOutput:'',memoryOutput:'',ports:[],serial:false,baud:19200,port:'',recent:[],device:{registers:[],configs:[],pins:[]},tools:[],details:null};
 let toastTimer;
 function toast(message,error=false){const el=$('#toast');el.textContent=message;el.classList.toggle('error',error);el.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.hidden=true,error?10000:4200);}
 function log(text){S.output=(S.output+text).slice(-300000);if(S.panel==='output')renderPanel();}
@@ -41,6 +41,9 @@ async function bridgeEvent(d){const st=$('#buildStatus');if(d.phase==='start'){i
   if((d.op==='open'||d.op==='new')&&v){await loaded(v);}
   else if(d.op==='debugAction'&&d.args?.action==='stop'){S.debug='disconnected';S.values={};S.location={};S.stopwatch=null;$('#callStack').textContent='No active session';renderInspector();updateMarks();controls();}
   else if(['debugStart','debugAction','inspect','waitStop'].includes(d.op)&&v){applyInspection(v);controls();if(S.location.file&&S.files.has(S.location.file)){showFile(S.location.file);E.go(S.location.line||1);}if(d.op==='debugStart'&&S.debug==='paused'&&!S.busy)await refreshRegisters();}
+  else if(d.op==='ad2Capture'&&v)ad2Received(v);
+  else if(d.op==='ad2Run'&&v){S.ad2RunId=v.run;S.ad2Running=true;S.ad2Frames=0;ad2RunState();}
+  else if(d.op==='ad2Stop'){S.ad2Running=false;ad2RunState();}
   else if(d.op==='resetStopwatch'&&v){S.stopwatch=v;renderStopwatch();}
   else if(d.op==='breakpoint'&&v){S.breakpoints=v.breakpoints;renderInspector();updateMarks();}
   else if(['addSource','configuration','project'].includes(d.op)&&v){S.project=v.project||v;renderSidebar();}
@@ -127,30 +130,142 @@ function renderBench(body){
  $('#benchMemory').onclick=()=>{S.memoryType='p';panel('memory');};$('#benchTablePointer').onclick=()=>readPointerMemory('TBLPTR');$('#benchBufferPointer').onclick=()=>readPointerMemory('FSR0');$('#benchListings').onclick=openListings;$('#benchInputs').onclick=()=>{S.stimulusPin='RE3';panel('interrupts');};
 }
 
-function instrumentGraph(c){
+const ad2Colors=['#f2c14e','#6cb6ff','#9aebcb','#e88fd0','#c3e88d','#ff8a80','#80deea','#ffb74d'];
+let ad2G=null,ad2Drag=null,ad2Width=0;
+const ad2Resize=typeof ResizeObserver==='function'?new ResizeObserver(entries=>{const w=Math.round(entries[0]?.contentRect.width||0);if(w&&w!==ad2Width){ad2Width=w;drawCapture();}}):null;
+function ad2Name(mode,ch){return mode==='scope'?'Scope '+(ch+1):'DIO '+ch;}
+function ad2Settings(){const t=S.ad2Trigger;return {mode:S.ad2Mode,span:S.ad2Span,channels:S.ad2Channels,trigger:t.source,edge:t.edge,level:t.level,position:t.position,triggerMode:t.mode,range:S.ad2Range};}
+// keeps the view and cursors while repeated captures have the same mode, window and channels
+function ad2Prepare(c,same){
+ const M=AsterMeasurements;M.normalize(c);S.ad2Prepared=c;S.ad2Edges=M.edges(c);
+ if(!same||!S.ad2View){S.ad2View={start:0,span:c.span};Object.assign(S.ad2Cursor,{x1:c.span*.25,x2:c.span*.75,y1:null,y2:null});}
+ if(!c.traces.some(t=>t.channel===S.ad2Measure))S.ad2Measure=c.traces[0]?.channel;
+}
+function ad2Received(c){
+ AsterMeasurements.normalize(c);const old=S.ad2Capture,key=x=>x&&[x.mode,Number(x.span).toFixed(9),x.traces.map(t=>t.channel).join()].join('|'),same=!!old&&key(old)===key(c);
+ S.ad2Capture=c;S.ad2Frames++;ad2Prepare(c,same);
+ if(S.panel==='instruments'){if(same&&$('#ad2Graph'))drawCapture();else renderPanel();}
+}
+function ad2RunState(){const b=$('#ad2Run');if(!b)return;b.textContent=S.ad2Running?'Stop':'Run';b.classList.toggle('primary',S.ad2Running);$('#ad2RunState').textContent=S.ad2Running?`Running · ${S.ad2Frames} acquisitions`:S.ad2Capture?'Stopped':'';}
+async function ad2Start(){try{S.ad2Frames=0;const r=await api('ad2Run',ad2Settings());S.ad2RunId=r.run;S.ad2Running=true;}catch(e){S.ad2Running=false;toast(e.message,true);}ad2RunState();}
+async function ad2Stop(){S.ad2Running=false;ad2RunState();try{await api('ad2Stop');}catch(e){toast(e.message,true);}}
+function ad2Changed(rerender){if(rerender)renderPanel();if(S.ad2Running)ad2Start();}
+function instrumentGraph(c,width=1000){
  if(!c)return '<div class="panel-empty">Capture a signal to see its waveform.</div>';
- const width=1000,height=160,pad=24,zoom=Number(S.ad2Zoom)||1,span=c.span/zoom,start=(Number(S.ad2Offset)||0)/100*(c.span-span),end=start+span,values=c.values||[];
- let path='';const x=t=>((t-start)/span*width).toFixed(2);
- if(c.mode==='scope'){
-  const min=-.5,max=5.5;
-  path=values.map((v,i)=>`${i?'L':'M'}${x(i/Math.max(1,values.length-1)*c.span)},${(height-pad-(Math.max(min,Math.min(max,v))-min)/(max-min)*(height-2*pad)).toFixed(1)}`).join(' ');
- }else{
-  let previous=null;
-  for(const [sample,level] of values){const t=sample/c.sampleRate,y=level?32:124;if(t<start){previous=y;continue;}if(!path&&previous!==null)path=`M0,${previous}`;if(t>end)break;if(previous===null)path=`M${x(t)},${y}`;else path+=` L${x(t)},${previous} L${x(t)},${y}`;previous=y;}
-  if(!path&&previous!==null)path=`M0,${previous}`;
-  if(previous!==null)path+=` L${width},${previous}`;
+ const M=AsterMeasurements;M.normalize(c);
+ const scope=c.mode==='scope',traces=c.traces,W=Math.max(360,Math.round(width||1000)),L=scope?50:52,axis=18,lane=scope?0:Math.max(20,Math.min(34,140/traces.length)),H=scope?190:Math.round(traces.length*lane+axis+6),plotH=H-axis,pw=W-L;
+ const v=S.ad2View||{start:0,span:c.span},start=v.start,span=v.span,end=start+span,x=t=>L+(t-start)/span*pw,f=n=>n.toFixed(1);
+ let vmin=0,vmax=1;
+ if(scope){const lo=Math.min(...traces.map(t=>t.min??Math.min(...t.values))),hi=Math.max(...traces.map(t=>t.max??Math.max(...t.values)));vmin=Math.floor((lo-.25)*2)/2;vmax=Math.ceil((hi+.25)*2)/2;if(!(vmax-vmin>=1))vmax=vmin+1;}
+ const yv=u=>6+(vmax-u)/(vmax-vmin)*(plotH-12);
+ ad2G={W,H,L,pw,plotH,start,span,vmin,vmax,yv,volt:py=>vmax-(py-6)/(plotH-12)*(vmax-vmin)};
+ const step=M.niceStep(span,Math.max(4,Math.round(pw/110))),ref=Math.max(Math.abs(start),Math.abs(end));let grid='';
+ for(let t=Math.ceil(start/step-1e-9)*step;t<=end+step*1e-6;t+=step){const px=x(t);grid+=`<line x1="${f(px)}" y1="0" x2="${f(px)}" y2="${plotH}" stroke="#ffffff1c"/><text x="${f(Math.min(W-58,px+3))}" y="${H-5}" fill="#b8c6d4" font-size="10">${M.tick(t,step,ref)}</text>`;}
+ let paths='',labels='';
+ if(scope){
+  const vstep=M.niceStep(vmax-vmin,5);
+  for(let u=Math.ceil(vmin/vstep-1e-9)*vstep;u<=vmax+1e-9;u+=vstep)grid+=`<line x1="${L}" y1="${f(yv(u))}" x2="${W}" y2="${f(yv(u))}" stroke="${Math.abs(u)<1e-9?'#ffffff40':'#ffffff1c'}"/><text x="${L-4}" y="${f(yv(u)+3)}" fill="#b8c6d4" font-size="10" text-anchor="end">${+u.toFixed(3)} V</text>`;
+  traces.forEach((t,k)=>{const d=c.dt,i0=Math.max(0,Math.floor(start/d)-1),i1=Math.min(t.values.length-1,Math.ceil(end/d)+1);let p='';for(let i=i0;i<=i1;i++)p+=`${p?'L':'M'}${f(x(i*d))},${f(yv(Math.max(vmin,Math.min(vmax,t.values[i]))))}`;paths+=`<path d="${p}" fill="none" stroke="${ad2Colors[k]}" stroke-width="1.5"/>`;labels+=`<text x="${L+6+k*62}" y="13" fill="${ad2Colors[k]}" font-size="10" font-weight="600">${ad2Name('scope',t.channel)}</text>`;});
+  if(c.trigger>=0)labels+=`<path d="M${L},${f(yv(c.level)-4)} L${L+7},${f(yv(c.level))} L${L},${f(yv(c.level)+4)}z" fill="#f0884e"><title>Trigger level ${M.volts(c.level)}</title></path>`;
+ }else traces.forEach((t,k)=>{
+  const top=k*lane,hi=top+5,lo=top+lane-5,color=ad2Colors[(k+2)%ad2Colors.length];let p='',previous=null;
+  for(const [sample,level] of t.values){const s=sample/c.sampleRate,y=level?hi:lo;if(s<start){previous=y;continue;}if(!p&&previous!==null)p=`M${L},${previous}`;if(s>end)break;if(previous===null)p=`M${f(x(s))},${y}`;else p+=` L${f(x(s))},${previous} L${f(x(s))},${y}`;previous=y;}
+  if(!p&&previous!==null)p=`M${L},${previous}`;if(previous!==null)p+=` L${W},${previous}`;
+  paths+=`<path d="${p}" fill="none" stroke="${color}" stroke-width="1.5"/>`;labels+=`<text x="5" y="${f(top+lane/2+4)}" fill="${color}" font-size="10" font-weight="600">${ad2Name('logic',t.channel)}</text>${k?`<line x1="0" y1="${top}" x2="${W}" y2="${top}" stroke="#ffffff14"/>`:''}`;
+ });
+ let marks='';const k=S.ad2Cursor,inView=t=>Number.isFinite(t)&&t>=start&&t<=end;
+ if(c.triggerTime>=0&&inView(c.triggerTime))marks+=`<line x1="${f(x(c.triggerTime))}" y1="0" x2="${f(x(c.triggerTime))}" y2="${plotH}" stroke="#f0884e80" stroke-dasharray="2 3"/><path d="M${f(x(c.triggerTime)-5)},0 L${f(x(c.triggerTime)+5)},0 L${f(x(c.triggerTime))},7z" fill="#f0884e"><title>Trigger</title></path>`;
+ if(k.show){
+  const a=Math.max(start,Math.min(k.x1,k.x2)),b=Math.min(end,Math.max(k.x1,k.x2));if(b>a)marks+=`<rect x="${f(x(a))}" y="0" width="${f(x(b)-x(a))}" height="${plotH}" fill="#ffffff0a"/>`;
+  [['x1','#ffd166'],['x2','#7cc4ff']].forEach(([n,col])=>{if(inView(k[n]))marks+=`<g class="ad2-cursor" data-cursor="${n}"><line x1="${f(x(k[n]))}" y1="0" x2="${f(x(k[n]))}" y2="${plotH}" stroke="${col}" stroke-width="1.2"/><rect x="${f(x(k[n])-10)}" y="${plotH-14}" width="20" height="13" rx="2" fill="${col}"/><text x="${f(x(k[n]))}" y="${plotH-4}" font-size="9" font-weight="700" text-anchor="middle" fill="#19222e">${n.toUpperCase()}</text></g>`;});
+  if(scope&&k.volts)[['y1','#ffd166'],['y2','#7cc4ff']].forEach(([n,col])=>{if(Number.isFinite(k[n])&&k[n]>=vmin&&k[n]<=vmax)marks+=`<g class="ad2-cursor" data-cursor="${n}"><line x1="${L}" y1="${f(yv(k[n]))}" x2="${W}" y2="${f(yv(k[n]))}" stroke="${col}" stroke-dasharray="5 3"/><text x="${W-4}" y="${f(yv(k[n])-3)}" font-size="9" font-weight="700" text-anchor="end" fill="${col}">${n.toUpperCase()}</text></g>`;});
  }
- const grid=[0,.25,.5,.75,1].map(f=>`<line x1="${f*width}" y1="0" x2="${f*width}" y2="${height}" stroke="#ffffff25"/><text x="${Math.min(width-65,f*width+3)}" y="${height-3}" fill="#b8c6d4" font-size="11">${((start+f*span)*1000).toFixed(3)} ms</text>`).join('');
- return `<svg xmlns="http://www.w3.org/2000/svg" class="instrument-graph" viewBox="0 0 ${width} ${height}" role="img" aria-label="${c.mode==='scope'?'Oscilloscope':'Logic analyzer'} waveform"><rect width="1000" height="160" fill="#19222e"/>${grid}<defs><clipPath id="captureClip"><rect width="1000" height="140"/></clipPath></defs><path clip-path="url(#captureClip)" d="${path}" fill="none" stroke="#9aebcb" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>`;
+ return `<svg xmlns="http://www.w3.org/2000/svg" class="instrument-graph" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${scope?'Oscilloscope':'Logic analyzer'} waveform"><rect width="${W}" height="${H}" fill="#19222e"/><rect width="${L}" height="${plotH}" fill="#151d27"/>${grid}<defs><clipPath id="captureClip"><rect x="${L}" width="${pw}" height="${plotH}"/></clipPath></defs><g clip-path="url(#captureClip)">${paths}${marks}</g>${labels}</svg>`;
+}
+function ad2Readout(){
+ const c=S.ad2Capture,k=S.ad2Cursor,M=AsterMeasurements;if(!c||!k.show)return '';const d=k.x2-k.x1,fmt=c.mode==='scope'?M.volts:v=>v??'—';
+ let out=`<span class="ad2-x1">X1 <b>${M.time(k.x1)}</b></span><span class="ad2-x2">X2 <b>${M.time(k.x2)}</b></span><span>ΔT <b>${M.time(d)}</b></span><span>1/ΔT <b>${M.frequency(1/Math.abs(d))}</b></span>`;
+ out+=c.traces.map(t=>`<span>${ad2Name(c.mode,t.channel)} <b>${fmt(M.valueAt(c,t,k.x1))} → ${fmt(M.valueAt(c,t,k.x2))}</b></span>`).join('');
+ if(c.mode==='scope'&&k.volts)out+=`<span class="ad2-x1">Y1 <b>${M.volts(k.y1)}</b></span><span class="ad2-x2">Y2 <b>${M.volts(k.y2)}</b></span><span>ΔV <b>${M.volts(k.y2-k.y1)}</b></span>`;
+ return out;
+}
+function ad2Metrics(){
+ const c=S.ad2Capture,M=AsterMeasurements;if(!c)return {metrics:'<span>Connect your AD2 and capture RC2 or RD4.</span>',stats:''};
+ const t=M.trace(c,S.ad2Measure),a=M.analyze(t),s=M.summary(t);
+ return {metrics:`<span>Sample interval <b>${(1e6/c.sampleRate).toFixed(3)} µs</b></span><span>Sample rate <b>${(c.sampleRate/1000).toFixed(1)} kS/s</b></span><span>Period <b>${a.cycles?(a.period*1000).toFixed(4)+' ms':'—'}</b></span><span>High time <b>${a.high?(a.high*1000).toFixed(4)+' ms':'—'}</b></span><span>Frequency <b>${a.cycles?(1/a.period).toFixed(2)+' Hz':'—'}</b></span><span>Duty <b>${a.cycles?a.duty.toFixed(2)+'%':'—'}</b></span>`,
+  stats:s?`${ad2Name(c.mode,t.channel)}: ${s.count} complete pulses · High time ${(s.min*1000).toFixed(4)}–${(s.max*1000).toFixed(4)} ms · Width variation ${((s.max-s.min)*1e6).toFixed(3)} µs peak-to-peak · Period ${(s.periodMin*1000).toFixed(4)}–${(s.periodMax*1000).toFixed(4)} ms. Variation is limited by the sample interval shown above.`:''};
+}
+function drawCapture(){
+ const host=$('#ad2Graph');if(!host)return;const c=S.ad2Capture,M=AsterMeasurements;
+ host.innerHTML=instrumentGraph(c,host.clientWidth||1000);if(!c)return;
+ $('#ad2Readout').innerHTML=ad2Readout();const m=ad2Metrics();$('#ad2Metrics').innerHTML=m.metrics;$('#ad2Stats').textContent=m.stats;
+ const step=M.niceStep(S.ad2View.span,Math.max(4,Math.round(ad2G.pw/110)));$('#ad2ViewInfo').textContent=`${M.tick(S.ad2View.span,step/10)} shown · ${M.tick(step,step)}/div`;
+ if($('#exportPulses'))$('#exportPulses').disabled=!m.stats;ad2RunState();
+}
+function ad2SetView(start,span){const c=S.ad2Capture;if(!c)return;span=Math.min(c.span,Math.max(c.mode==='scope'?c.dt*10:20/c.sampleRate,1e-7,span));S.ad2View={start:Math.max(0,Math.min(c.span-span,start)),span};drawCapture();}
+function ad2Zoom(factor,at){const v=S.ad2View;at??=v.start+v.span/2;ad2SetView(at-(at-v.start)*factor,v.span*factor);}
+function ad2Point(e){const r=$('#ad2Graph svg').getBoundingClientRect();return {x:(e.clientX-r.left)/r.width*ad2G.W,y:(e.clientY-r.top)/r.height*ad2G.H};}
+function ad2TimeAt(px){return ad2G.start+(px-ad2G.L)/ad2G.pw*ad2G.span;}
+function ad2Snap(t){const c=S.ad2Capture;if(S.ad2Snap&&c.mode==='logic'){const e=AsterMeasurements.nearest(S.ad2Edges,t);if(e!==null&&Math.abs(e-t)<=10/ad2G.pw*ad2G.span)return e;}return Math.max(0,Math.min(c.span,t));}
+function ad2Hit(p){
+ const k=S.ad2Cursor;if(!k.show||!ad2G)return null;
+ for(const n of ['x2','x1'])if(Math.abs(ad2G.L+(k[n]-ad2G.start)/ad2G.span*ad2G.pw-p.x)<=6&&p.y<=ad2G.plotH)return n;
+ if(S.ad2Capture.mode==='scope'&&k.volts)for(const n of ['y2','y1'])if(Number.isFinite(k[n])&&Math.abs(ad2G.yv(k[n])-p.y)<=5&&p.x>=ad2G.L)return n;
+ return null;
+}
+function ad2Pointer(host){
+ host.onpointerdown=e=>{if(!S.ad2Capture||!ad2G||e.button!==0)return;const p=ad2Point(e);ad2Drag={hit:ad2Hit(p),x:e.clientX,p,view:{...S.ad2View},moved:false};try{host.setPointerCapture(e.pointerId);}catch{}e.preventDefault();};
+ host.onpointermove=e=>{
+  if(!S.ad2Capture||!ad2G)return;const p=ad2Point(e),d=ad2Drag;
+  if(!d){const h=ad2Hit(p);host.style.cursor=h?(h[0]==='x'?'ew-resize':'ns-resize'):'crosshair';return;}
+  if(Math.abs(e.clientX-d.x)>2)d.moved=true;
+  if(d.hit?.[0]==='x'){S.ad2Cursor[d.hit]=ad2Snap(ad2TimeAt(p.x));drawCapture();}
+  else if(d.hit){S.ad2Cursor[d.hit]=ad2G.volt(p.y);drawCapture();}
+  else if(d.moved){host.style.cursor='grabbing';ad2SetView(d.view.start-(p.x-d.p.x)/ad2G.pw*d.view.span,d.view.span);}
+ };
+ host.onpointerup=e=>{const d=ad2Drag;ad2Drag=null;if(!d||!ad2G)return;const p=ad2Point(e);if(!d.hit&&!d.moved&&p.x>=ad2G.L&&p.y<=ad2G.plotH){const k=S.ad2Cursor;k.show=true;if(e.altKey&&S.ad2Capture.mode==='scope'){k.volts=true;k[e.shiftKey?'y2':'y1']=ad2G.volt(p.y);}else k[e.shiftKey?'x2':'x1']=ad2Snap(ad2TimeAt(p.x));drawCapture();if($('#ad2Cursors'))$('#ad2Cursors').checked=true;if($('#ad2Volts'))$('#ad2Volts').checked=k.volts;}else host.style.cursor='crosshair';};
+ host.onwheel=e=>{if(!S.ad2Capture||!ad2G)return;e.preventDefault();const scale=e.deltaMode===1?16:1,dx=e.deltaX*scale,dy=e.deltaY*scale,v=S.ad2View;
+  if(e.shiftKey||Math.abs(dx)>Math.abs(dy))ad2SetView(v.start+(dx||dy)/ad2G.pw*v.span,v.span);else ad2Zoom(Math.exp(dy*.002),ad2TimeAt(Math.max(ad2G.L,ad2Point(e).x)));};
 }
 function renderInstruments(body){
- const c=S.ad2Capture,status=S.ad2Status,stats=AsterMeasurements.summary(c);
- body.innerHTML=`<div class="instrument-panel"><div class="instrument-controls"><strong>Analog Discovery 2</strong><span>${status?status.devices?esc(status.name||'Device connected'):'No device connected':'Check your device'}</span><button id="ad2Check" class="button">Check device</button><label>Instrument <select id="ad2Mode"><option value="logic" ${S.ad2Mode==='logic'?'selected':''}>Logic analyzer</option><option value="scope" ${S.ad2Mode==='scope'?'selected':''}>Oscilloscope</option></select></label><label>Input <select id="ad2Channel"></select></label><label>Window <select id="ad2Span"><option value="0.02">20 ms</option><option value="0.05">50 ms</option><option value="0.1">100 ms</option><option value="2.2">2.2 s</option></select></label><button id="ad2Capture" class="button primary">Capture</button></div><div class="instrument-results">${instrumentGraph(c)}${c?`<div class="panel-control-row"><label>Zoom <select id="captureZoom">${[1,2,5,10,20].map(n=>`<option value="${n}" ${n===(S.ad2Zoom||1)?'selected':''}>${n}×</option>`).join('')}</select></label><label>Position <input id="captureOffset" type="range" min="0" max="100" value="${S.ad2Offset||0}"></label><button id="exportWaveform" class="button">Save waveform</button>${c.mode==='logic'?'<button id="exportPulses" class="button">Save pulse CSV</button><button id="exportEdges" class="button">Save edge CSV</button>':''}</div>`:''}<div class="instrument-metrics">${c?`<span>Sample interval <b>${(1e6/c.sampleRate).toFixed(3)} µs</b></span><span>Sample rate <b>${(c.sampleRate/1000).toFixed(1)} kS/s</b></span><span>Period <b>${c.cycles?(c.period*1000).toFixed(4)+' ms':'—'}</b></span><span>High time <b>${c.high?(c.high*1000).toFixed(4)+' ms':'—'}</b></span><span>Frequency <b>${c.cycles?(1/c.period).toFixed(2)+' Hz':'—'}</b></span><span>Duty <b>${c.cycles?c.duty.toFixed(2)+'%':'—'}</b></span>`:'<span>Connect your AD2 and capture RC2 or RD4.</span>'}</div>${stats?`<p>${stats.count} complete pulses · High time ${(stats.min*1000).toFixed(4)}–${(stats.max*1000).toFixed(4)} ms · Width variation ${((stats.max-stats.min)*1e6).toFixed(3)} µs peak-to-peak · Period ${(stats.periodMin*1000).toFixed(4)}–${(stats.periodMax*1000).toFixed(4)} ms. Variation is limited by the sample interval shown above.</p>`:''}<p>Connect the selected AD2 input to the signal and AD2 ground to board ground. DIO 0–15 are logic inputs; Scope 1/2 are analog inputs. A 50 ms window suits RC2 servo pulses. Use 2.2 s for the 1 Hz RD4 LED.</p></div></div>`;
- if(c){$('#captureZoom').onchange=e=>{S.ad2Zoom=Number(e.target.value);renderPanel();};$('#captureOffset').oninput=e=>{S.ad2Offset=Number(e.target.value);$('.instrument-graph').outerHTML=instrumentGraph(c);};$('#exportWaveform').onclick=()=>task('Saving waveform…',()=>api('exportText',{name:'waveform.svg',content:$('.instrument-graph').outerHTML}));if(c.mode==='logic'){$('#exportPulses').disabled=!stats;$('#exportPulses').onclick=()=>task('Saving pulse measurements…',()=>api('exportText',{name:'pulses.csv',content:AsterMeasurements.csv(c)}));$('#exportEdges').onclick=()=>task('Saving signal edges…',()=>api('exportText',{name:'edges.csv',content:AsterMeasurements.transitionsCSV(c)}));}}
- const channel=$('#ad2Channel');channel.innerHTML=Array.from({length:S.ad2Mode==='scope'?2:16},(_,i)=>`<option value="${i}">${S.ad2Mode==='scope'?'Scope '+(i+1):'DIO '+i}</option>`).join('');channel.value=String(Math.min(S.ad2Channel,S.ad2Mode==='scope'?1:15));$('#ad2Span').value=String(S.ad2Span);
- $('#ad2Mode').onchange=e=>{S.ad2Mode=e.target.value;S.ad2Channel=0;renderPanel();};channel.onchange=e=>S.ad2Channel=Number(e.target.value);$('#ad2Span').onchange=e=>S.ad2Span=Number(e.target.value);
+ const c=S.ad2Capture,status=S.ad2Status,scope=S.ad2Mode==='scope',t=S.ad2Trigger,k=S.ad2Cursor,count=scope?2:16,opt=(value,label,on)=>`<option value="${value}" ${on?'selected':''}>${label}</option>`;
+ const channels=Array.from({length:count},(_,i)=>`<label title="${ad2Name(S.ad2Mode,i)}"><input type="checkbox" data-ad2-channel="${i}" ${S.ad2Channels.includes(i)?'checked':''}>${scope?i+1:i}</label>`).join('');
+ const sources=opt(-1,'None (free run)',t.source<0)+Array.from({length:count},(_,i)=>opt(i,ad2Name(S.ad2Mode,i),t.source===i)).join('');
+ body.innerHTML=`<div class="instrument-panel"><div class="instrument-controls"><strong>Analog Discovery 2</strong><span>${status?status.devices?esc(status.name||'Device connected'):'No device connected':'Check your device'}</span><button id="ad2Check" class="button">Check device</button>
+<label>Instrument <select id="ad2Mode">${opt('logic','Logic analyzer',!scope)}${opt('scope','Oscilloscope',scope)}</select></label>
+<div class="ad2-field">${scope?'Scope inputs':'DIO inputs'}<div class="ad2-channels ${scope?'scope':''}">${channels}</div></div>
+<label>Window <select id="ad2Span">${[[.001,'1 ms'],[.005,'5 ms'],[.02,'20 ms'],[.05,'50 ms'],[.1,'100 ms'],[.5,'500 ms'],[1,'1 s'],[2.2,'2.2 s']].map(([v,l])=>opt(v,l,v===S.ad2Span)).join('')}</select></label>
+${scope?`<label>Range <select id="ad2Range">${opt(50,'±25 V',S.ad2Range===50)}${opt(5,'±2.5 V',S.ad2Range===5)}</select></label>`:''}
+<div class="section-label">TRIGGER</div>
+<label>Source <select id="ad2TrigSource">${sources}</select></label>
+<div class="ad2-pair"><label>Edge <select id="ad2TrigEdge" ${t.source<0?'disabled':''}>${opt('rise','Rising ↑',t.edge==='rise')}${opt('fall','Falling ↓',t.edge==='fall')}</select></label><label>Mode <select id="ad2TrigMode" ${t.source<0?'disabled':''}>${opt('auto','Auto',t.mode==='auto')}${opt('normal','Normal',t.mode==='normal')}</select></label></div>
+<div class="ad2-pair">${scope?`<label>Level (V) <input id="ad2TrigLevel" type="number" step="0.1" min="-25" max="25" value="${t.level}" ${t.source<0?'disabled':''}></label>`:''}<label>Position (%) <input id="ad2TrigPos" type="number" step="5" min="0" max="100" value="${t.position}" ${t.source<0?'disabled':''}></label></div>
+<div class="ad2-run"><button id="ad2Single" class="button primary">Single</button><button id="ad2Run" class="button">Run</button></div><span id="ad2RunState"></span></div>
+<div class="instrument-results"><div id="ad2Graph" class="ad2-graph"></div><div id="ad2Readout" class="instrument-metrics ad2-readout"></div>${c?`<div class="panel-control-row"><label>Measure <select id="ad2Measure">${c.traces.map(t=>opt(t.channel,ad2Name(c.mode,t.channel),t.channel===S.ad2Measure)).join('')}</select></label><button id="ad2Fit" class="button" title="Show the whole capture">Fit</button><button id="ad2ZoomOut" class="button" title="Zoom out (scroll down)">−</button><button id="ad2ZoomIn" class="button" title="Zoom in (scroll up)">+</button><span id="ad2ViewInfo" class="ad2-view"></span><label><input id="ad2Cursors" type="checkbox" ${k.show?'checked':''}>Cursors</label>${c.mode==='logic'?`<label><input id="ad2SnapEdges" type="checkbox" ${S.ad2Snap?'checked':''}>Snap to edges</label>`:`<label><input id="ad2Volts" type="checkbox" ${k.volts?'checked':''}>Voltage cursors</label>`}<button id="ad2CursorsHere" class="button">Cursors to view</button><button id="exportWaveform" class="button">Save waveform</button>${c.mode==='logic'?'<button id="exportPulses" class="button">Save pulse CSV</button><button id="exportEdges" class="button">Save edge CSV</button>':'<button id="exportSamples" class="button">Save samples CSV</button>'}</div>`:''}<div id="ad2Metrics" class="instrument-metrics"></div><p id="ad2Stats"></p><p>Scroll to zoom at the pointer; drag or shift-scroll to pan; Fit shows the whole capture. Click to place X1, shift-click for X2, or drag a cursor${c?.mode==='scope'?'; alt-click places Y1 (alt-shift Y2)':''}. Connect AD2 ground to board ground. DIO 0–15 are logic inputs; Scope 1/2 are analog inputs. A 50 ms window suits RC2 servo pulses. Use 2.2 s for the 1 Hz RD4 LED.</p></div></div>`;
+ if(c&&S.ad2Prepared!==c)ad2Prepare(c,false);
+ const host=$('#ad2Graph');ad2Width=0;ad2Resize?.disconnect();ad2Resize?.observe(host);ad2Pointer(host);drawCapture();if(!c)$('#ad2Metrics').innerHTML=ad2Metrics().metrics;ad2RunState();
  $('#ad2Check').onclick=()=>task('Checking Analog Discovery…',async()=>{S.ad2Status=await api('ad2Status');renderPanel();});
- $('#ad2Capture').onclick=()=>task('Capturing signal…',async()=>{S.ad2Zoom=1;S.ad2Offset=0;S.ad2Capture=await api('ad2Capture',{mode:S.ad2Mode,span:S.ad2Span,channel:S.ad2Channel});renderPanel();});
+ $('#ad2Mode').onchange=e=>{S.ad2Mode=e.target.value;S.ad2Channels=[0];S.ad2Trigger.source=0;ad2Changed(true);};
+ $$('[data-ad2-channel]').forEach(b=>b.onchange=()=>{const list=$$('[data-ad2-channel]').filter(x=>x.checked).map(x=>Number(x.dataset.ad2Channel));if(!list.length){b.checked=true;return;}S.ad2Channels=list;ad2Changed(false);});
+ $('#ad2Span').onchange=e=>{S.ad2Span=Number(e.target.value);ad2Changed(false);};
+ if($('#ad2Range'))$('#ad2Range').onchange=e=>{S.ad2Range=Number(e.target.value);ad2Changed(false);};
+ $('#ad2TrigSource').onchange=e=>{t.source=Number(e.target.value);ad2Changed(true);};
+ $('#ad2TrigEdge').onchange=e=>{t.edge=e.target.value;ad2Changed(false);};$('#ad2TrigMode').onchange=e=>{t.mode=e.target.value;ad2Changed(false);};
+ const number=(id,key,lo,hi)=>{const el=$(id);if(el)el.onchange=()=>{const v=Number(el.value);if(!Number.isFinite(v)||v<lo||v>hi){toast(`Enter a value from ${lo} to ${hi}.`,true);el.value=t[key];return;}t[key]=v;ad2Changed(false);};};
+ number('#ad2TrigLevel','level',-25,25);number('#ad2TrigPos','position',0,100);
+ $('#ad2Single').onclick=()=>task('Capturing signal…',async()=>{if(S.ad2Running)await ad2Stop();ad2Received(await api('ad2Capture',ad2Settings()));});
+ $('#ad2Run').onclick=()=>S.ad2Running?ad2Stop():ad2Start();
+ if(!c)return;
+ $('#ad2Measure').onchange=e=>{S.ad2Measure=Number(e.target.value);drawCapture();};
+ $('#ad2Fit').onclick=()=>ad2SetView(0,c.span);$('#ad2ZoomIn').onclick=()=>ad2Zoom(.5);$('#ad2ZoomOut').onclick=()=>ad2Zoom(2);
+ $('#ad2Cursors').onchange=e=>{k.show=e.target.checked;drawCapture();};
+ if($('#ad2SnapEdges'))$('#ad2SnapEdges').onchange=e=>S.ad2Snap=e.target.checked;
+ if($('#ad2Volts'))$('#ad2Volts').onchange=e=>{k.volts=e.target.checked;if(k.volts&&!Number.isFinite(k.y1)){k.y1=ad2G.vmin+(ad2G.vmax-ad2G.vmin)*.25;k.y2=ad2G.vmin+(ad2G.vmax-ad2G.vmin)*.75;}drawCapture();};
+ $('#ad2CursorsHere').onclick=()=>{const v=S.ad2View;Object.assign(k,{show:true,x1:v.start+v.span*.25,x2:v.start+v.span*.75});if(c.mode==='scope'){k.y1=ad2G.vmin+(ad2G.vmax-ad2G.vmin)*.25;k.y2=ad2G.vmin+(ad2G.vmax-ad2G.vmin)*.75;}renderPanel();};
+ $('#exportWaveform').onclick=()=>task('Saving waveform…',()=>api('exportText',{name:'waveform.svg',content:$('#ad2Graph svg').outerHTML}));
+ const M=AsterMeasurements,measured=()=>M.trace(c,S.ad2Measure);
+ if(c.mode==='logic'){$('#exportPulses').onclick=()=>task('Saving pulse measurements…',()=>api('exportText',{name:'pulses.csv',content:M.csv(measured())}));$('#exportEdges').onclick=()=>task('Saving signal edges…',()=>api('exportText',{name:'edges.csv',content:M.transitionsCSV(c)}));}
+ else $('#exportSamples').onclick=()=>task('Saving scope samples…',()=>api('exportText',{name:'scope.csv',content:M.samplesCSV(c)}));
 }
 
 function readPointerMemory(pointer){return task('Reading pointer memory…',async()=>{
@@ -200,6 +315,8 @@ window.asterEvent=(name,data)=>{
  if(name==='debugOutput'){S.debugOutput=(S.debugOutput+data).slice(-300000);if(S.panel==='debug')renderPanel();}
  if(name==='debugState'){S.debug=data.state;renderInspector();controls();if(S.panel==='interrupts')renderPanel();}
  if(name==='debugStopped'){S.debug='paused';S.location=data;renderInspector();updateMarks();$('#buildStatus').textContent='Paused · '+data.address;$('#buildStatus').className='good';if(!S.busy){refreshRegisters().catch(e=>toast(e.message,true));if(S.files.has(data.file)){showFile(data.file);E.go(data.line);}}}
+ if(name==='ad2Frame'){if(data.run===S.ad2RunId)ad2Received(data.frame);return;}
+ if(name==='ad2Stopped'){if(data.run===S.ad2RunId){S.ad2Running=false;ad2RunState();if(data.error)toast(data.error,true);}return;}
  if(name==='serialData'){S.serialOutput=(S.serialOutput+data).slice(-200000);if(data.includes('[Serial device disconnected]'))S.serial=false;if(S.panel==='serial')renderPanel();}
  if(name==='requestClose'){(async()=>{if([...S.files.values()].some(f=>f.dirty)){if(!await api('confirm',{title:'Quit with unsaved changes?',message:'Unsaved changes will be discarded. Cancel to save your files first.',accept:'Discard and Quit'}))return;}if(S.busy&&!await api('confirm',{title:'An operation is still running.',message:'Quit will stop active tools and disconnect the debugger.',accept:'Stop and Quit'}))return;await api('closeApproved');})();}
 };
@@ -247,7 +364,7 @@ async function uiTest(path){const checks=[];try{
  await debugAction('continue');await until(()=>S.debug==='paused'&&S.location.line===idleLine);checks.push({name:'Continue stops at breakpoint created by gutter click',ok:S.location.line===idleLine});
  await gutterClick(idleLine,true);await gutterClick(isrLine);checks.push({name:'Paused gutter click installs and draws ISR breakpoint',ok:S.breakpoints.length===1&&S.breakpoints[0].line===isrLine&&!!$('.cm-breakpoint')});
  panel('interrupts');checks.push({name:'Interrupt panel enabled in simulator',ok:!$('#triggerInterrupt').disabled});await api('triggerInterrupt',{source:'INT0'});await debugAction('continue');await until(()=>S.debug==='paused'&&S.location.line===isrLine);await debugAction('stepi');checks.push({name:'ISR executes through native UI workflow',ok:formatHex(S.values.irq_count)==='0x01'});
- panel('instruments');checks.push({name:'Analog Discovery scope and logic controls render',ok:!!$('#ad2Check')&&!!$('#ad2Capture')&&$('#ad2Mode').options.length===2});
+ panel('instruments');checks.push({name:'Analog Discovery run, trigger and channel controls render',ok:!!$('#ad2Check')&&!!$('#ad2Single')&&$('#ad2Run').textContent==='Run'&&$('#ad2Mode').options.length===2&&$$('[data-ad2-channel]').length===16&&$('#ad2TrigSource').options.length===17&&!$('#ad2TrigLevel')});
  view('files');panel('interrupts');renderInspector();$('#toast').hidden=true;if(S.location.line)E.go(S.location.line);await new Promise(r=>setTimeout(r,600));
  await debugAction('stop');
  const cPath=path.replace(/\/[^/]+$/, '/CWorkflowUIProject.X');
@@ -261,8 +378,29 @@ async function uiTest(path){const checks=[];try{
  checks.push({name:'C source and header appear without losing open edits',ok:S.files.has(mainPath)&&sourceFiles().some(f=>f.name==='timer.c')&&sourceFiles().some(f=>f.name==='timer.h')});
  await build();checks.push({name:'Native multi-file C build succeeds',ok:$('#buildStatus').textContent.includes('succeeded')});
  await safeOpen(mainPath);await startDebug();checks.push({name:'Native C simulator starts',ok:S.debug==='paused'});await debugAction('step');checks.push({name:'C source-line step works',ok:S.debug==='paused'});await debugAction('stop');
- S.ad2Capture={mode:'logic',sampleRate:1000000,span:.05,samples:50000,channel:0,cycles:1,period:.02,high:.001,duty:5,values:[[0,0],[100,1],[1100,0],[20100,1],[21300,0],[40100,1]]};panel('instruments');
- checks.push({name:'Pulse measurements and export controls render',ok:!!$('#exportPulses')&&!$('#exportPulses').disabled&&$('#panelBody').textContent.includes('200.000 µs')});$('#captureZoom').value='10';$('#captureZoom').dispatchEvent(new Event('change'));checks.push({name:'Waveform zoom changes time axis',ok:$('.instrument-graph').textContent.includes('5.000 ms')});
+ const pulses=[[0,0],[100,1],[1100,0],[20100,1],[21300,0],[40100,1]],logic={mode:'logic',sampleRate:1000000,span:.05,samples:50000,trigger:0,triggerTime:.005,traces:[{channel:0,values:pulses},{channel:4,values:[[0,1],[30000,0]]}]};
+ panel('instruments');ad2Received(logic);const at=t=>{const r=$('#ad2Graph svg').getBoundingClientRect();return {clientX:r.left+(ad2G.L+(t-ad2G.start)/ad2G.span*ad2G.pw)/ad2G.W*r.width,clientY:r.top+12};};
+ const pointer=(type,t,o={})=>$('#ad2Graph').dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,button:0,pointerId:1,...at(t),...o})),click=(t,o)=>{pointer('pointerdown',t,o);pointer('pointerup',t,o);};
+ checks.push({name:'Pulse measurements and export controls render',ok:!!$('#exportPulses')&&!$('#exportPulses').disabled&&!!$('#exportEdges')&&$('#panelBody').textContent.includes('200.000 µs')&&$('#ad2Metrics').textContent.includes('20.0000 ms')});
+ checks.push({name:'Logic channels draw in separate labelled lanes with a trigger mark',ok:$$('#ad2Graph svg path[stroke-width="1.5"]').length===2&&$('.instrument-graph').textContent.includes('DIO 4')&&!!$('#ad2Graph title')});
+ const axis=$('.instrument-graph').textContent;$('#ad2Graph').dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:-1151,...at(.01)}));
+ checks.push({name:'Mouse wheel zooms at the pointer and updates the time axis',ok:Math.abs(S.ad2View.span-.005)<1e-4&&Math.abs(S.ad2View.start-.009)<1e-4&&$('.instrument-graph').textContent!==axis&&$('#ad2ViewInfo').textContent.includes('shown')});
+ const before=S.ad2View.start;pointer('pointerdown',.011);pointer('pointermove',.012);pointer('pointerup',.012);
+ checks.push({name:'Dragging the waveform pans the view',ok:Math.abs(S.ad2View.start-(before-.001))<1e-6&&Math.abs(S.ad2View.span-.005)<1e-4});
+ $('#ad2Fit').click();checks.push({name:'Fit restores the whole capture',ok:S.ad2View.start===0&&S.ad2View.span===.05});
+ click(.0013);click(.0199,{shiftKey:true});
+ checks.push({name:'Click and shift-click place X1/X2 snapped to edges with ΔT and 1/ΔT',ok:S.ad2Cursor.x1===.0011&&S.ad2Cursor.x2===.0201&&$('#ad2Readout').textContent.includes('ΔT 19.0000 ms')&&$('#ad2Readout').textContent.includes('52.632 Hz')&&$('#ad2Readout').textContent.includes('DIO 4 1 → 1')&&$$('.ad2-cursor').length===2});
+ pointer('pointerdown',.0201);pointer('pointermove',.0215);pointer('pointerup',.0215);$('#ad2SnapEdges').checked=false;$('#ad2SnapEdges').dispatchEvent(new Event('change'));pointer('pointerdown',.0011);pointer('pointermove',.0016);pointer('pointerup',.0016);
+ checks.push({name:'Dragging cursors moves them, with snapping optional',ok:S.ad2Cursor.x2===.0213&&Math.abs(S.ad2Cursor.x1-.0016)<1e-4&&S.ad2Cursor.x1!==.0011});S.ad2Snap=true;
+ $('#ad2ZoomIn').click();const kept={...S.ad2View},cursor=S.ad2Cursor.x2;S.ad2Running=true;S.ad2RunId=99;window.asterEvent('ad2Frame',{run:99,frame:{...logic,traces:[{channel:0,values:[[0,0],[100,1],[1300,0],[20100,1]]},{channel:4,values:[[0,0]]}]}});
+ checks.push({name:'Run frames update the waveform but keep zoom and cursors',ok:S.ad2View.span===kept.span&&S.ad2Cursor.x2===cursor&&$('#ad2Run').textContent==='Stop'&&$('#ad2RunState').textContent.includes('Running')&&$('#ad2Metrics').textContent.includes('1.2000 ms')});
+ window.asterEvent('ad2Stopped',{run:98,error:''});const stale=S.ad2Running;window.asterEvent('ad2Stopped',{run:99,error:''});$('#toast').hidden=true;
+ checks.push({name:'Stop event from the current run resets the Run button',ok:stale&&!S.ad2Running&&$('#ad2Run').textContent==='Run'});
+ const dc=[2.9,3.3,3.3,0,0,0,3.3,3.3,0,0];ad2Received({mode:'scope',sampleRate:200000,span:.05,samples:10000,dt:.005,range:50,trigger:0,level:1.5,triggerTime:.005,traces:[{channel:0,cycles:1,period:.03,high:.01,duty:33.3,min:0,max:3.3,values:dc},{channel:1,cycles:0,period:0,high:0,duty:0,min:5,max:5,values:dc.map(()=>5)}]});
+ $('#ad2Volts').checked=true;$('#ad2Volts').dispatchEvent(new Event('change'));
+ checks.push({name:'Scope shows both inputs with voltage cursors and ΔV',ok:$('.instrument-graph').textContent.includes('Scope 2')&&!!$('#exportSamples')&&$('#ad2Readout').textContent.includes('ΔV')&&$$('[data-cursor^="y"]').length===2&&$('#ad2Readout').textContent.includes('Scope 1 ')});
+ $('#ad2Mode').value='scope';$('#ad2Mode').dispatchEvent(new Event('change'));$('#ad2TrigSource').value='-1';$('#ad2TrigSource').dispatchEvent(new Event('change'));
+ checks.push({name:'Scope trigger controls follow the trigger source',ok:$$('[data-ad2-channel]').length===2&&!!$('#ad2Range')&&$('#ad2TrigEdge').disabled&&$('#ad2TrigLevel').disabled&&JSON.stringify(ad2Settings())==='{"mode":"scope","span":0.05,"channels":[0],"trigger":-1,"edge":"rise","level":1.5,"position":10,"triggerMode":"auto","range":50}'});
  await api('uiTestDone',{checks,ok:checks.every(c=>c.ok),errors:[],registers:S.values,location:S.location});
  }catch(e){await api('uiTestDone',{checks,ok:false,error:e.message,stack:e.stack});}}
 window.addEventListener('unhandledrejection',e=>toast(e.reason?.message||String(e.reason),true));

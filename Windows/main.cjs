@@ -1,13 +1,13 @@
 'use strict';
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { SerialPort } = require('serialport');
-const { copyTree, Preferences, Toolchain, IDECore, slash } = require('./core.cjs');
+const { ad2Arguments, copyTree, Preferences, Toolchain, IDECore, slash } = require('./core.cjs');
 app.setName('Aster');
 app.setName('Aster');
-let window,core,preferences,approved=false,busy=false;
+let window,core,preferences,approved=false,busy=false,ad2Process=null,ad2Run=0;
 const assets=path.join(__dirname,'assets'),entry=path.join(assets,'Web/index.html'),entryURL=pathToFileURL(entry).href;
 const smoke=process.argv.includes('--smoke-test');
 function smokeReport(result){if(smoke&&process.env.ASTER_SMOKE_REPORT)fs.writeFileSync(process.env.ASTER_SMOKE_REPORT,JSON.stringify(result,null,2));}
@@ -17,7 +17,7 @@ async function confirm(title,message,accept='Continue'){return (await dialog.sho
 function trusted(e){if(e.sender!==window.webContents || e.senderFrame!==window.webContents.mainFrame || e.senderFrame.url!==entryURL)throw Error('Untrusted application frame.');}
 async function perform(op,a){
   switch(op){
-    case 'ad2Status':case 'ad2Capture':{const packaged=path.join(process.resourcesPath,'ad2','aster-ad2.exe'),local=path.join(__dirname,'ad2','aster-ad2.exe'),helper=fs.existsSync(packaged)?packaged:local;if(!fs.existsSync(helper))throw Error('Analog Discovery capture helper is missing. Rebuild with Visual Studio C tools.');let args=['status'];if(op==='ad2Capture'){const mode=a.mode,span=Number(a.span),channel=Number(a.channel);if(!['scope','logic'].includes(mode)||!Number.isFinite(span)||span<.001||span>3||!Number.isInteger(channel)||channel<0||channel>(mode==='scope'?1:15))throw Error('Invalid Analog Discovery capture settings.');args=['capture',mode,String(span),String(channel)];}const output=await new Promise((resolve,reject)=>execFile(helper,args,{timeout:12000,maxBuffer:512*1024,windowsHide:true},(error,stdout,stderr)=>error?reject(Error((stderr||error.message).trim())):resolve(stdout)));return JSON.parse(output);}
+    case 'ad2Status':case 'ad2Capture':{const helper=ad2Helper();let args=['status'];if(op==='ad2Capture'){args=['capture',...ad2Arguments(a)];await ad2Stop();}const output=await new Promise((resolve,reject)=>execFile(helper,args,{timeout:16000,maxBuffer:4*1024*1024,windowsHide:true},(error,stdout,stderr)=>error?reject(Error((stderr||error.message).trim())):resolve(stdout)));return JSON.parse(output);}
     case 'bootstrap':{const root=path.join(os.homedir(),'MPLABXProjects');const found=fs.existsSync(root)?fs.readdirSync(root).filter(n=>n.endsWith('.X')).map(n=>slash(path.join(root,n))):[];return {tools:core.tc.status(),recent:[...new Set([...(preferences.data.recent||[]),...found])],device:JSON.parse(fs.readFileSync(path.join(assets,'Resources/device.json'))),ports:await ports(),initialProject:'',testMode:false};}
     case 'open':{const result=core.open(a.path);preferences.set('recent',[a.path,...(preferences.data.recent||[]).filter(p=>p!==a.path)].slice(0,12));window.setTitle(result.name+' — Aster');return result;}
     case 'new':{let dest=path.resolve(a.path);if(!/\.X$/i.test(dest))dest+='.X';if(!/^[A-Za-z][A-Za-z0-9_-]*$/.test(path.basename(dest,'.X')))throw Error('Use letters, numbers, underscores, or hyphens for the project name.');if(fs.existsSync(dest))throw Error('A folder already exists there.');const kind=a.template||'blank';if(!['blank','basic','interrupt','c'].includes(kind))throw Error('Unknown template.');copyTree(path.join(assets,'Resources',kind==='interrupt'?'InterruptTemplate.X':kind==='c'?'CTemplate.X':'Template.X'),dest);const xml=path.join(dest,'nbproject/project.xml');fs.writeFileSync(xml,fs.readFileSync(xml,'utf8').replaceAll('Template.X',path.basename(dest)).replaceAll('<name>Template</name>','<name>'+path.basename(dest,'.X')+'</name>'));if(kind==='blank')fs.writeFileSync(path.join(dest,'main.asm'),'');core.open(dest);try{await core.regenerate();}catch(e){event('buildOutput','Project created. Regenerate Makefiles after setting up the Microchip tools.\n'+e.message+'\n');}return core.project.info();}
@@ -61,6 +61,14 @@ async function perform(op,a){
     default:throw Error('Unknown operation: '+op);
   }
 }
+function ad2Helper(){const packaged=path.join(process.resourcesPath,'ad2','aster-ad2.exe'),local=path.join(__dirname,'ad2','aster-ad2.exe'),helper=fs.existsSync(packaged)?packaged:local;if(!fs.existsSync(helper))throw Error('Analog Discovery capture helper is missing. Rebuild with Visual Studio C tools.');return helper;}
+// run: the helper prints one json frame per line until its stdin closes
+async function ad2Start(a){const args=['run',...ad2Arguments(a)],helper=ad2Helper();await ad2Stop();const id=++ad2Run,child=spawn(helper,args,{windowsHide:true});ad2Process=child;let buffer='',error='';
+  child.stdout.setEncoding('utf8');child.stdout.on('data',chunk=>{buffer+=chunk;let nl;while((nl=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,nl).trim();buffer=buffer.slice(nl+1);if(line)try{event('ad2Frame',{run:id,frame:JSON.parse(line)});}catch{}}});
+  child.stderr.setEncoding('utf8');child.stderr.on('data',chunk=>error+=chunk);child.on('error',e=>error+=e.message);
+  child.on('close',code=>{if(ad2Process===child)ad2Process=null;event('ad2Stopped',{run:id,error:code===0?'':error.trim()||'Analog Discovery capture stopped.'});});
+  return {run:id};}
+function ad2Stop(){const child=ad2Process;ad2Process=null;if(!child||child.exitCode!==null)return Promise.resolve();return new Promise(resolve=>{const timer=setTimeout(()=>{child.kill();resolve();},3000);child.once('close',()=>{clearTimeout(timer);resolve();});child.stdin.end();});}
 async function ports(){return (await SerialPort.list()).map(p=>p.path).sort();}
 async function disconnect(){const port=core.serial;core.serial=null;if(port?.isOpen)await new Promise(resolve=>port.close(()=>resolve()));}
 app.whenReady().then(async()=>{
@@ -80,8 +88,10 @@ app.whenReady().then(async()=>{
   ipcMain.handle('aster:request',async(e,op,a)=>{
     trusted(e);
     if(op==='cancel'){core.runner.cancel();return true;}
+    if(op==='ad2Run')return ad2Start(a);
+    if(op==='ad2Stop'){await ad2Stop();return true;}
     if(op==='confirm')return confirm(a.title||'Continue?',a.message||'',a.accept||'Continue');
-    if(op==='closeApproved'){approved=true;core.shutdown();app.quit();return true;}
+    if(op==='closeApproved'){approved=true;ad2Stop();core.shutdown();app.quit();return true;}
     if(op==='chooseProject'){const choice=await dialog.showMessageBox(window,{message:'What would you like to open?',buttons:['Project folder','HEX / ELF image','Cancel'],cancelId:2});if(choice.response===2)return '';const r=await dialog.showOpenDialog(window,{title:'Open MPLAB project or image',properties:[choice.response===0?'openDirectory':'openFile'],filters:[{name:'PIC images',extensions:['hex','elf']}]});return r.canceled?'':slash(r.filePaths[0]);}
     if(op==='chooseSource'){const r=await dialog.showOpenDialog(window,{title:'Import starter into current tab',properties:['openFile'],filters:[{name:'Source files',extensions:['c','h','asm','s','inc']}]});if(r.canceled)return null;const file=r.filePaths[0],data=fs.readFileSync(file);if(data.length>2000000)throw Error('Source file is too large.');let content;try{content=new TextDecoder('utf-8',{fatal:true}).decode(data);}catch{content=data.toString('latin1');}return {name:path.basename(file),content};}
     if(op==='exportText'){if(typeof a.content!=='string'||Buffer.byteLength(a.content)>4000000||typeof a.name!=='string')throw Error('Invalid export.');const r=await dialog.showSaveDialog(window,{title:'Export',defaultPath:path.basename(a.name)});if(r.canceled)return false;fs.writeFileSync(r.filePath,a.content,'utf8');return true;}
@@ -93,5 +103,5 @@ app.whenReady().then(async()=>{
   await window.loadFile(entry);
   if(smoke){const smokeDir=fs.mkdtempSync(path.join(os.tmpdir(),'aster-smoke-'));const smokeProject=path.join(smokeDir,'Smoke.X');copyTree(path.join(assets,'Examples/FirstLight.X'),smokeProject);try{const result=await window.webContents.executeJavaScript(`(async()=>{for(let i=0;i<100;i++){if(document.querySelector('#toolStatus')?.textContent!=='Checking tools…'&&document.querySelector('.cm-editor')){await loaded(await api('open',{path:${JSON.stringify(slash(smokeProject))}}));const file=S.active;if(!file)throw Error('No source opened');const original=await api('read',{path:file});const content=original.content+'\\n; packaged bridge save check\\n';await api('save',{path:file,content,digest:original.digest,encoding:original.encoding});const saved=await api('read',{path:file});if(saved.content!==content)throw Error('Bridge save mismatch');return {title:document.title,editor:true,bridge:!!window.webkit?.messageHandlers?.aster,node:typeof require,project:true,save:true};};await new Promise(r=>setTimeout(r,100));}throw Error(document.querySelector('#toast')?.textContent||'Editor did not initialize');})()`);if(!result.editor||!result.bridge||result.node!=='undefined')throw Error(JSON.stringify(result));smokeReport({ok:true,...result});console.log('ASTER_SMOKE_OK '+JSON.stringify(result));fs.rmSync(smokeDir,{recursive:true,force:true});approved=true;app.exit(0);}catch(e){fs.rmSync(smokeDir,{recursive:true,force:true});failed(e);}}
 }).catch(e=>{failed(e);});
-app.on('before-quit',e=>{if(!approved&&!smoke&&window&&!window.isDestroyed()){e.preventDefault();event('requestClose',true);}else core?.shutdown();});
+app.on('before-quit',e=>{if(!approved&&!smoke&&window&&!window.isDestroyed()){e.preventDefault();event('requestClose',true);}else{ad2Stop();core?.shutdown();}});
 app.on('window-all-closed',()=>app.quit());

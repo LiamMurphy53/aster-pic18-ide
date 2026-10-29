@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate, NSWindowDelegate {
     let core = IDECore()
+    let ad2 = AD2Session()
     var window: NSWindow!
     var web: WKWebView!
     let worker = DispatchQueue(label:"app.aster.operations")
@@ -169,18 +170,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         func str(_ key: String,_ fallback: String = "") -> String { args[key] as? String ?? fallback }
         func int(_ key: String,_ fallback: Int = 0) -> Int { args[key] as? Int ?? fallback }
         switch op {
-        case "ad2Status", "ad2Capture":
+        case "ad2Status", "ad2Capture", "ad2Run":
             let helper = resources.appendingPathComponent("aster-ad2")
             guard FileManager.default.isExecutableFile(atPath:helper.path) else { throw IDEError("Analog Discovery capture helper is missing from this app build.") }
-            var parameters = ["status"]
-            if op == "ad2Capture" {
-                let mode = str("mode"), span = args["span"] as? Double ?? 0, channel = int("channel",-1)
-                guard ["scope","logic"].contains(mode),span >= 0.001,span <= 3,channel >= 0,channel <= (mode == "scope" ? 1 : 15) else { throw IDEError("Invalid Analog Discovery capture settings.") }
-                parameters = ["capture",mode,String(span),String(channel)]
+            if op == "ad2Run" {
+                let id = try ad2.start(helper.path,try AD2Session.arguments(args),frame:{ id,frame in self.event("ad2Frame",["run":id,"frame":frame]) },ended:{ id,error in self.event("ad2Stopped",["run":id,"error":error]) })
+                return ["run":id]
             }
-            let (code,output) = try CommandRunner().run(helper.path,parameters,timeout:12)
+            var parameters = ["status"]
+            if op == "ad2Capture" { parameters = ["capture"]+(try AD2Session.arguments(args)); ad2.stop(wait:true) }
+            let (code,output) = try CommandRunner().run(helper.path,parameters,timeout:16)
             guard code == 0, let data = output.data(using:.utf8), let object = try? JSONSerialization.jsonObject(with:data) else { throw IDEError(output.trimmingCharacters(in:.whitespacesAndNewlines)) }
             return object
+        case "ad2Stop":
+            ad2.stop(wait:true); return true
         case "bootstrap":
             let defaults = UserDefaults.standard
             if let path = defaults.string(forKey:"mplab") { core.tc.mplab = path }
@@ -412,7 +415,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { if closing { return true }; event("requestClose",true); return false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply { if closing { return .terminateNow }; event("requestClose",true); return .terminateCancel }
-    func applicationWillTerminate(_ notification: Notification) { bridge?.stop(); core.shutdown() }
+    func applicationWillTerminate(_ notification: Notification) { bridge?.stop(); ad2.stop(wait:true); core.shutdown() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 

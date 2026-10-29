@@ -11,6 +11,14 @@ const symbol = /^[A-Za-z_][A-Za-z0-9_.$]*$/;
 function safeLine(s) { if (typeof s !== 'string' || /[\r\n\0]/.test(s)) throw Error('A debugger command must fit on one line.'); return s; }
 function quoteMDB(s) { safeLine(s); if (s.includes('"')) throw Error('Debugger paths cannot contain double quotes.'); return '"' + slash(s) + '"'; }
 function inside(root, file) { const r = path.relative(root, file); return r === '' || (!r.startsWith('..' + path.sep) && r !== '..' && !path.isAbsolute(r)); }
+// same request validation as AD2Session.arguments in Core.swift
+function ad2Arguments(a) {
+  const mode = a.mode, span = Number(a.span), top = mode === 'scope' ? 1 : 15, channels = Array.isArray(a.channels) ? a.channels : [a.channel ?? 0];
+  const trigger = a.trigger ?? channels[0] ?? 0, edge = a.edge ?? 'rise', triggerMode = a.triggerMode ?? 'auto', level = Number(a.level ?? 1.5), position = Number(a.position ?? 10), range = Number(a.range ?? 50);
+  if (!['scope', 'logic'].includes(mode) || !(span >= .001 && span <= 3) || !channels.length || new Set(channels).size !== channels.length || !channels.every(c => Number.isInteger(c) && c >= 0 && c <= top) ||
+    !Number.isInteger(trigger) || trigger < -1 || trigger > top || !['rise', 'fall'].includes(edge) || !['auto', 'normal'].includes(triggerMode) || !(Math.abs(level) <= 25) || !(position >= 0 && position <= 100) || ![5, 50].includes(range)) throw Error('Invalid Analog Discovery capture settings.');
+  return [mode, String(span), 'channels=' + channels.join(','), 'trigger=' + (trigger < 0 ? 'none' : trigger), 'edge=' + edge, 'level=' + level, 'position=' + position, 'mode=' + triggerMode, 'range=' + range];
+}
 function walk(root) {
   if (!fs.existsSync(root)) return [];
   return fs.readdirSync(root, { withFileTypes: true }).flatMap(e => {
@@ -238,4 +246,4 @@ class IDECore {
   async program(index=0){if(this.debugger)throw Error('Stop debugging before programming.');if(!Number.isInteger(index)||index<0)throw Error('Invalid tool index.');const p=this.requireProject();if(!p.prebuilt&&!(await this.build()).ok)throw Error('Fix build errors before programming.');const image=p.artifact('hex','production'),s=await this.newSession();try{await s.checked('device PIC18F87K22');await s.checked('set poweroptions.powerenable false');await s.checked('hwtool PICkit3 -p '+index,60000);const log=await s.checked('program '+quoteMDB(image),120000);if(!/program succeeded/i.test(log))throw Error('Programming was not confirmed.\n'+log);return {ok:true,log,image};}finally{s.stop();}}
   shutdown(){this.debugger?.stop();this.runner.cancel();if(this.serial?.isOpen)this.serial.close();}
 }
-module.exports={copyTree,Preferences,Toolchain,CommandRunner,PICProject,PromptReader,MDBSession,IDECore,digest,quoteMDB,slash,inside};
+module.exports={ad2Arguments,copyTree,Preferences,Toolchain,CommandRunner,PICProject,PromptReader,MDBSession,IDECore,digest,quoteMDB,slash,inside};

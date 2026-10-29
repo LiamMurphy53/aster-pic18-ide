@@ -76,3 +76,31 @@ C debug builds now explicitly select the documented XC8 debugger flag for Simula
 The Instruments panel supports waveform zoom/pan, complete-cycle pulse width and period ranges, peak-to-peak width variation, sample interval, pulse CSV, edge CSV, and SVG waveform export. Statistics use actual logic capture edge positions and sample rate. Partial cycles are excluded. Scope waveform display remains downsampled. Synthetic edge fixtures verify measurement/export calculations; physical AD2 capture is still unverified.
 
 All **35 native WKWebView checks** and **18 Windows/shared JavaScript tests** passed. Native tests exercised C project creation, multi-file editing/building, every field on comma-separated configuration pragmas, C source stepping, and measurement/zoom/export controls, as well as existing assembly workflows. The screenshot was visually inspected. Windows tests additionally verify filename protection, project metadata registration, and restoration of C debug flags on build failure. The Mac application was rebuilt and packaged.
+
+## AD2 Instruments overhaul — October 28, 2026
+
+The Instruments panel now works like WaveForms instead of offering one Capture button:
+- multi-channel logic (DIO 0–15 lanes) and scope (Scope 1 and 2 overlaid)
+- Single and continuous Run/Stop
+- trigger source (or none), edge, level, position, and Auto/Normal mode
+- scroll-wheel zoom at the pointer, drag to pan, and Fit
+- X1/X2 time cursors with ΔT, 1/ΔT and per-channel values, with optional snap-to-edge
+- scope Y1/Y2 cursors with ΔV
+- scope sample CSV export, alongside the existing measurements and exports
+
+The helper now opens the AD2 configuration with the largest buffer: 16k logic samples, giving 3.06 µs at 50 ms instead of 12.2 µs.
+
+**Simulator and synthetic results (macOS):**
+- All 44 native WKWebView checks passed. This includes 12 new or updated Instruments checks driven by synthetic captures and real pointer, wheel and run-event dispatch.
+- 19 instrument logic/validation checks passed, as did the helper self-test (analysis and request parsing).
+- The full backend suite passed: 21 integration, 10 interrupt, 29 stopwatch, 14 programming, 13 Lab 4 and 3 serial checks, plus the C, watch, project and Bench suites.
+- 20 Windows/shared JavaScript tests passed, run with Electron's bundled Node on macOS.
+
+**Hardware (helper only, no board signal wired):**
+- A connected AD2 was detected.
+- Logic (5 DIO) and scope (2 channel) captures returned frames at 16384 samples.
+- Run mode streamed about 14 frames per second at 20 ms and stopped within about 120 ms when its stdin closed, including while waiting for a Normal trigger.
+
+Still unverified:
+- measuring a real RC2/RD4 signal through the app UI
+- the Windows edition on Windows (Run/Stop and helper build)

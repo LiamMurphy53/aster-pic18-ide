@@ -7,6 +7,8 @@ swiftc -swift-version 5 -module-cache-path "$TEST_CACHE" Sources/Core.swift Test
 /private/tmp/aster-lab5-tests "$PWD"
 xcrun clang -std=c11 -D_DEFAULT_SOURCE -O2 Sources/ad2_capture.c -o /private/tmp/aster-ad2-tests -lm
 /private/tmp/aster-ad2-tests self-test
+swiftc -swift-version 5 -module-cache-path "$TEST_CACHE" -framework JavaScriptCore Sources/Core.swift Tests/Instruments.swift -o /private/tmp/aster-instrument-tests
+/private/tmp/aster-instrument-tests "$PWD"
 swiftc -swift-version 5 -module-cache-path "$TEST_CACHE" Sources/Core.swift Tests/Watches.swift -o /private/tmp/aster-watch-tests
 /private/tmp/aster-watch-tests "$PWD"
 swiftc -swift-version 5 -module-cache-path "$TEST_CACHE" -framework JavaScriptCore Sources/Core.swift Tests/ProjectFiles.swift -o /private/tmp/aster-project-files
