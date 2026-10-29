@@ -104,3 +104,36 @@ The helper now opens the AD2 configuration with the largest buffer: 16k logic sa
 Still unverified:
 - measuring a real RC2/RD4 signal through the app UI
 - the Windows edition on Windows (Run/Stop and helper build)
+
+## WaveForms-style scope follow-up — October 28, 2026
+
+These additions respond to a real WaveForms session: a reversed 1+/1− probe, hand-placed cursors reading 1.0059 ms for a 1 ms pulse, and over-precise copied digits.
+- **Scope data:** the helper now sends full-resolution scope samples (base64 int16), and the panel measures from every sample.
+- **Inputs:** per-channel Invert and 1+/1− labeling; per-channel V/div, center and Autoset; a time/div control.
+- **Trigger:** Auto, Normal and None modes, with a level line and position marker.
+- **Edges:** interpolated 50%-or-level threshold crossings with hysteresis; cursors can snap to them and jump to the next or previous rising or falling edge.
+- **Cursors:** a table of any number of cursors with a reference dropdown, ΔX, 1/ΔX and per-channel values, and cursor times shown on the time axis.
+- **Measurements:** a table (period, frequency, positive and negative width, duty, rise/fall 10–90%, min/max/average/peak-to-peak) with min/max/average statistics across Run acquisitions.
+- **Status line and rounding:** a status line, and readouts rounded to the sample interval and voltage step.
+
+**Simulator and synthetic results:**
+- All 50 native WKWebView checks passed, including 18 Instruments checks using synthetic logic captures and a 100 kS/s scope capture of 1.000 ms / 20 ms pulses with 30 µs edges on an upright and a reversed channel.
+- 27 instrument logic checks passed. These cover sample decoding, exact 50% crossings, a settable level, invert, rise/fall, edge stepping and resolution rounding.
+- The helper self-test now also checks the sample encoder.
+- 20 Windows/shared JavaScript tests passed.
+
+**Hardware:** the AD2 was detected, but WaveForms held it open during this work, so Aster could not capture. A real RC2 capture through Aster is still pending.
+
+## Separate Instruments window — October 28, 2026
+
+The AD2 panel now opens in its own resizable window. Opening it: the bottom panel's Instruments tab, Window → Instruments (⇧⌘I), or the `openInstruments` bridge op.
+- **macOS:** a second NSWindow/WKWebView loads `index.html#instruments`, and its size and position are remembered. Native events are broadcast to both pages, and responses go back to the page that asked.
+- **Layout:** plot on the left, cursor and measurement tables side by side, settings on the right with Single/Run at the top.
+- **Behavior:** closing the window stops a run. Bridge `ad2Capture`/`ad2Run` results now reach the page.
+
+**Results:**
+- All 53 native WKWebView checks passed. The 19 Instruments checks now run inside the real Instruments window, plus checks that the window opens with its own layout and that native AD2 events reach it and not the main window.
+- A launch crash found during testing is fixed: a fragment-bearing URL built with URLComponents lost its file scheme.
+- The Windows edition gets a matching BrowserWindow and its 20 JavaScript tests pass, but it is not run on Windows.
+
+**Hardware, later the same evening:** with WaveForms quit, Aster's helper opened the AD2 and captured both scope channels: 16384 samples at 327.9 kS/s, reported range 60.16 V, full-resolution data decoded by the panel code. No RC2 pulse was present. Both inputs wandered between about −1.9 V and −0.9 V with no repeating edges, which looks like floating or disconnected inputs. So the capture path works on real hardware, but measuring the 1 ms / 20 ms RC2 signal is still pending.

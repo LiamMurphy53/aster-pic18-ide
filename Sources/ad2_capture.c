@@ -64,6 +64,17 @@ static volatile sig_atomic_t stopping;
 static void on_signal(int s) { (void)s; stopping=1; }
 static void error_message(const char *prefix) { char message[512]={0}; GetLastErrorMsg(message); fprintf(stderr,"%s: %s\n",prefix,message[0]?message:"WaveForms SDK call failed"); }
 static void json_string(const char *s) { putchar('"'); for (;*s;s++) { unsigned char c=(unsigned char)*s; if (c=='"'||c=='\\') { putchar('\\');putchar(c); } else if(c>=32&&c<127) putchar(c); } putchar('"'); }
+// full-resolution scope samples as little-endian int16 * scale, base64 encoded into out (4*ceil(2n/3)+1 bytes)
+static void base64_samples(const double *v,int count,double scale,char *out) {
+ static const char digits[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+ unsigned char block[3]={0};int filled=0;
+ for(int i=0;i<count;i++) {
+  long q=lround(v[i]/scale);if(q>32767)q=32767;if(q<-32768)q=-32768;unsigned u=(unsigned)(q&0xffff);
+  for(int b=0;b<2;b++) {block[filled++]=(unsigned char)(b?u>>8:u&0xff);if(filled==3) {*out++=digits[block[0]>>2];*out++=digits[((block[0]&3)<<4)|(block[1]>>4)];*out++=digits[((block[1]&15)<<2)|(block[2]>>6)];*out++=digits[block[2]&63];filled=0;}}
+ }
+ if(filled) {if(filled==1)block[1]=0;*out++=digits[block[0]>>2];*out++=digits[((block[0]&3)<<4)|(block[1]>>4)];*out++=filled==2?digits[(block[1]&15)<<2]:'=';*out++='=';}
+ *out=0;
+}
 static int load_library(void) {
 #ifdef _WIN32
  library=LoadLibraryA("dwf.dll");
@@ -154,17 +165,15 @@ static int acquire(int handle,const Request *r,int count,double rate,int run) {
  if(r->scope) {volts=(double*)calloc((size_t)count,sizeof(double));if(!volts) goto done;}
  else {words=(uint16_t*)calloc((size_t)count,sizeof(uint16_t));if(!words||!DigitalInStatusData(handle,words,count*2)) {error_message("Reading logic samples failed");goto done;}}
  double range=r->range;if(r->scope&&AnalogInChannelRangeGet) AnalogInChannelRangeGet(handle,r->list[0],&range);
- int stride=(count+1999)/2000;
- printf("{\"mode\":\"%s\",\"sampleRate\":%.9g,\"samples\":%d,\"span\":%.9g,\"range\":%.6g,\"dt\":%.9g,\"trigger\":%d,\"edge\":\"%s\",\"level\":%.6g,\"position\":%.6g,\"triggerMode\":\"%s\",\"triggerTime\":%.9g,\"traces\":[",r->scope?"scope":"logic",rate,count,count/rate,range,r->scope?stride/rate:1/rate,r->trigger,r->falling?"fall":"rise",r->level,r->position,r->normal?"normal":"auto",r->trigger<0?-1:r->position/100*count/rate);
+ printf("{\"mode\":\"%s\",\"sampleRate\":%.9g,\"samples\":%d,\"span\":%.9g,\"range\":%.6g,\"dt\":%.9g,\"trigger\":%d,\"edge\":\"%s\",\"level\":%.6g,\"position\":%.6g,\"triggerMode\":\"%s\",\"triggerTime\":%.9g,\"traces\":[",r->scope?"scope":"logic",rate,count,count/rate,range,1/rate,r->trigger,r->falling?"fall":"rise",r->level,r->position,r->normal?"normal":"auto",r->trigger<0?-1:r->position/100*count/rate);
  for(int j=0;j<r->count;j++) {
   int ch=r->list[j];double low=0,peak=0;
   if(r->scope) {if(!AnalogInStatusData(handle,ch,volts,count)) {error_message("Reading scope samples failed");goto done;}low=peak=volts[0];for(int i=0;i<count;i++) {bits[i]=volts[i]>=r->level;if(volts[i]<low)low=volts[i];if(volts[i]>peak)peak=volts[i];}}
   else for(int i=0;i<count;i++)bits[i]=(words[i]>>ch)&1;
   double period=0,high=0,duty=0;int cycles=analysis(bits,count,rate,&period,&high,&duty);
   printf("%s{\"channel\":%d,\"cycles\":%d,\"period\":%.9g,\"high\":%.9g,\"duty\":%.9g",j?",":"",ch,cycles,period,high,duty);
-  if(r->scope) {printf(",\"min\":%.5g,\"max\":%.5g,\"values\":[",low,peak);for(int i=0;i<count;i+=stride)printf("%s%.5g",i?",":"",volts[i]);}
-  else {printf(",\"values\":[");for(int i=0;i<count;i++)if(i==0||bits[i]!=bits[i-1])printf("%s[%d,%d]",i?",":"",i,bits[i]);}
-  printf("]}");
+  if(r->scope) {double scale=fmax(fmax(fabs(low),fabs(peak)),1e-6)/32767;char *text=(char*)malloc((size_t)count*8/3+8);if(!text) goto done;base64_samples(volts,count,scale,text);printf(",\"min\":%.6g,\"max\":%.6g,\"scale\":%.9g,\"data\":\"%s\"}",low,peak,scale,text);free(text);}
+  else {printf(",\"values\":[");for(int i=0;i<count;i++)if(i==0||bits[i]!=bits[i-1])printf("%s[%d,%d]",i?",":"",i,bits[i]);printf("]}");}
  }
  puts("]}");fflush(stdout);result=1;
  done:free(bits);free(volts);free(words);return result;
@@ -177,7 +186,8 @@ int main(int argc,char **argv) {
   char b2[]="scope",b4[]="channels=0,2",b5[]="channels=1,1",b6[]="trigger=none",b7[]="range=10",b8[]="level=1.2",b9[]="bogus=1";
   char *bad1[]={a0,a1,b2,a3,b4},*bad2[]={a0,a1,a2,a3,b5},*bad3[]={a0,a1,b2,a3,b7},*bad4[]={a0,a1,a2,a3,b9},*good[]={a0,a1,b2,a3,b6,b8};
   if(parse(5,bad1,&r)||parse(5,bad2,&r)||parse(5,bad3,&r)||parse(5,bad4,&r)||!parse(6,good,&r)||!r.scope||r.trigger!=-1||r.count!=1||r.list[0]!=0||r.level!=1.2||r.range!=50)return 1;
-  puts("AD2 capture analysis and request parsing passed");return 0;
+  double v[3]={1,-1,0},w[2]={2,-32768};char text[16];base64_samples(v,3,1,text);if(strcmp(text,"AQD//wAA"))return 1;base64_samples(w,2,1,text);if(strcmp(text,"AgAAgA=="))return 1;
+  puts("AD2 capture analysis, request parsing and sample encoding passed");return 0;
  }
  int run=argc>1&&strcmp(argv[1],"run")==0;
  if(argc<2||(strcmp(argv[1],"status")&&strcmp(argv[1],"capture")&&!run)) {fprintf(stderr,"Usage: aster-ad2 status | capture|run scope|logic span-seconds [channels=0,1] [trigger=N|none] [edge=rise|fall] [level=V] [position=%%] [mode=auto|normal] [range=5|50]\n");return 2;}
@@ -187,7 +197,7 @@ int main(int argc,char **argv) {
  if(strcmp(argv[1],"status")==0) {char name[32]={0};if(devices>0)EnumDeviceName(0,name);printf("{\"installed\":true,\"devices\":%d,\"name\":",devices);json_string(name);puts("}");return 0;}
  if(devices<1) {fprintf(stderr,"No Analog Discovery device found. Connect it and close any WaveForms session using it.\n");return 2;}
  signal(SIGINT,on_signal);signal(SIGTERM,on_signal);
- int handle=0;if(!open_device(r.scope,&handle)||!handle) {error_message("Could not open Analog Discovery");return 2;}
+ int handle=0;if(!open_device(r.scope,&handle)||!handle) {error_message("Could not open Analog Discovery");fprintf(stderr,"Close WaveForms or any other app using the AD2, then try again.\n");return 2;}
  int count=0,result=2;double rate=0;
  if(configure(handle,&r,&count,&rate)) {
   if(!run) result=acquire(handle,&r,count,rate,0)==1?0:2;

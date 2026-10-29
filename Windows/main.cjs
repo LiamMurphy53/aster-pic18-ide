@@ -7,14 +7,24 @@ const { SerialPort } = require('serialport');
 const { ad2Arguments, copyTree, Preferences, Toolchain, IDECore, slash } = require('./core.cjs');
 app.setName('Aster');
 app.setName('Aster');
-let window,core,preferences,approved=false,busy=false,ad2Process=null,ad2Run=0;
+let window,instruments=null,core,preferences,approved=false,busy=false,ad2Process=null,ad2Run=0;
 const assets=path.join(__dirname,'assets'),entry=path.join(assets,'Web/index.html'),entryURL=pathToFileURL(entry).href;
 const smoke=process.argv.includes('--smoke-test');
 function smokeReport(result){if(smoke&&process.env.ASTER_SMOKE_REPORT)fs.writeFileSync(process.env.ASTER_SMOKE_REPORT,JSON.stringify(result,null,2));}
 function failed(error){smokeReport({ok:false,error:String(error.stack||error)});console.error(error);app.exit(1);}
-function event(name,data){if(window&&!window.isDestroyed())window.webContents.executeJavaScript('window.asterEvent?.('+JSON.stringify(name)+','+JSON.stringify(data)+')').catch(()=>{});}
+// events reach the main window and the instruments window; each page ignores what it does not show
+function event(name,data){for(const w of [window,instruments])if(w&&!w.isDestroyed())w.webContents.executeJavaScript('window.asterEvent?.('+JSON.stringify(name)+','+JSON.stringify(data)+')').catch(()=>{});}
 async function confirm(title,message,accept='Continue'){return (await dialog.showMessageBox(window,{type:'warning',title,message,buttons:[accept,'Cancel'],defaultId:1,cancelId:1,noLink:true})).response===0;}
-function trusted(e){if(e.sender!==window.webContents || e.senderFrame!==window.webContents.mainFrame || e.senderFrame.url!==entryURL)throw Error('Untrusted application frame.');}
+function trusted(e){const page=e.sender===window?.webContents?entryURL:e.sender===instruments?.webContents?entryURL+'#instruments':null;if(!page||e.senderFrame!==e.sender.mainFrame||e.senderFrame.url!==page)throw Error('Untrusted application frame.');}
+// analog discovery scope/logic analyzer in its own window, loading the same page in instruments mode; remembers its bounds
+function openInstruments(){
+  if(instruments&&!instruments.isDestroyed()){instruments.show();instruments.focus();return;}
+  instruments=new BrowserWindow({width:1280,height:820,minWidth:760,minHeight:520,...(preferences.data.instrumentsBounds||{}),title:'Aster Instruments — Analog Discovery 2',backgroundColor:'#19222e',webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+  instruments.setMenuBarVisibility(false);instruments.webContents.setWindowOpenHandler(()=>({action:'deny'}));instruments.webContents.on('will-navigate',e=>e.preventDefault());
+  instruments.on('close',()=>{preferences.set('instrumentsBounds',instruments.getBounds());ad2Stop();});
+  instruments.on('closed',()=>{instruments=null;event('instrumentsWindow',false);});
+  instruments.loadFile(entry,{hash:'instruments'});event('instrumentsWindow',true);
+}
 async function perform(op,a){
   switch(op){
     case 'ad2Status':case 'ad2Capture':{const helper=ad2Helper();let args=['status'];if(op==='ad2Capture'){args=['capture',...ad2Arguments(a)];await ad2Stop();}const output=await new Promise((resolve,reject)=>execFile(helper,args,{timeout:16000,maxBuffer:4*1024*1024,windowsHide:true},(error,stdout,stderr)=>error?reject(Error((stderr||error.message).trim())):resolve(stdout)));return JSON.parse(output);}
@@ -82,19 +92,21 @@ app.whenReady().then(async()=>{
     {label:'File',submenu:[command('Open Project…','open','Ctrl+O'),command('New Project…','new','Ctrl+N'),command('Save','save','Ctrl+S'),command('Save All','saveAll','Ctrl+Shift+S'),{role:'quit'}]},
     {label:'Edit',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'},command('Find','find','Ctrl+F')]},
     {label:'Project',submenu:[command('Build','build','Ctrl+B'),command('Clean','clean'),command('Regenerate Makefiles','regenerate'),command('Reveal in Explorer','reveal'),command('Toolchain Settings','settings','Ctrl+,')]},
-    {label:'Debug',submenu:[command('Start Session','debug','Ctrl+D'),command('Continue / Pause','toggleRun'),command('Step Instruction','stepi'),command('Step Over','next'),command('Reset','reset'),command('Stop Session','stop')]}
+    {label:'Debug',submenu:[command('Start Session','debug','Ctrl+D'),command('Continue / Pause','toggleRun'),command('Step Instruction','stepi'),command('Step Over','next'),command('Reset','reset'),command('Stop Session','stop')]},
+    {label:'Window',submenu:[{role:'minimize'},{type:'separator'},{label:'Instruments',accelerator:'Ctrl+Shift+I',click:()=>openInstruments()}]}
   ]));
-  ipcMain.on('aster:response',(e,response)=>{trusted(e);window.webContents.executeJavaScript('window.asterResponse?.('+JSON.stringify(response.id)+','+JSON.stringify(response.value??null)+','+JSON.stringify(response.error||'')+')').catch(()=>{});});
+  ipcMain.on('aster:response',(e,response)=>{trusted(e);e.sender.executeJavaScript('window.asterResponse?.('+JSON.stringify(response.id)+','+JSON.stringify(response.value??null)+','+JSON.stringify(response.error||'')+')').catch(()=>{});});
   ipcMain.handle('aster:request',async(e,op,a)=>{
     trusted(e);
     if(op==='cancel'){core.runner.cancel();return true;}
+    if(op==='openInstruments'){openInstruments();return true;}
     if(op==='ad2Run')return ad2Start(a);
     if(op==='ad2Stop'){await ad2Stop();return true;}
     if(op==='confirm')return confirm(a.title||'Continue?',a.message||'',a.accept||'Continue');
     if(op==='closeApproved'){approved=true;ad2Stop();core.shutdown();app.quit();return true;}
     if(op==='chooseProject'){const choice=await dialog.showMessageBox(window,{message:'What would you like to open?',buttons:['Project folder','HEX / ELF image','Cancel'],cancelId:2});if(choice.response===2)return '';const r=await dialog.showOpenDialog(window,{title:'Open MPLAB project or image',properties:[choice.response===0?'openDirectory':'openFile'],filters:[{name:'PIC images',extensions:['hex','elf']}]});return r.canceled?'':slash(r.filePaths[0]);}
     if(op==='chooseSource'){const r=await dialog.showOpenDialog(window,{title:'Import starter into current tab',properties:['openFile'],filters:[{name:'Source files',extensions:['c','h','asm','s','inc']}]});if(r.canceled)return null;const file=r.filePaths[0],data=fs.readFileSync(file);if(data.length>2000000)throw Error('Source file is too large.');let content;try{content=new TextDecoder('utf-8',{fatal:true}).decode(data);}catch{content=data.toString('latin1');}return {name:path.basename(file),content};}
-    if(op==='exportText'){if(typeof a.content!=='string'||Buffer.byteLength(a.content)>4000000||typeof a.name!=='string')throw Error('Invalid export.');const r=await dialog.showSaveDialog(window,{title:'Export',defaultPath:path.basename(a.name)});if(r.canceled)return false;fs.writeFileSync(r.filePath,a.content,'utf8');return true;}
+    if(op==='exportText'){if(typeof a.content!=='string'||Buffer.byteLength(a.content)>4000000||typeof a.name!=='string')throw Error('Invalid export.');const r=await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender)||window,{title:'Export',defaultPath:path.basename(a.name)});if(r.canceled)return false;fs.writeFileSync(r.filePath,a.content,'utf8');return true;}
     if(op==='chooseNew'){const r=await dialog.showSaveDialog(window,{title:'Create PIC18 Project',defaultPath:path.join(os.homedir(),'MPLABXProjects','MyProject.X')});return r.canceled?'':slash(r.filePath);}
     if(op==='reveal'){const file=a.path?core.requireProject().allowed(a.path):core.project?.root||assets;shell.showItemInFolder(file);return true;}
     if(busy)throw Error('An operation is already in progress.');busy=true;try{return await perform(op,a);}finally{busy=false;}

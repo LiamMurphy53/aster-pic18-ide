@@ -7,6 +7,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     let ad2 = AD2Session()
     var window: NSWindow!
     var web: WKWebView!
+    var content: WKUserContentController!
+    var instrumentsWindow: NSWindow?
+    var instrumentsWeb: WKWebView?
     let worker = DispatchQueue(label:"app.aster.operations")
     var closing = false
     var busy = false
@@ -18,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var capture: String?
     func applicationDidFinishLaunching(_ notification: Notification) {
         testMode = CommandLine.arguments.contains("--ui-test")
-        let content = WKUserContentController(); content.add(self,name:"aster")
+        content = WKUserContentController(); content.add(self,name:"aster")
         let config = WKWebViewConfiguration(); config.userContentController = content
         web = WKWebView(frame:.zero,configuration:config)
         web.navigationDelegate = self; web.uiDelegate = self
@@ -76,13 +79,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let wi = NSMenuItem(); bar.addItem(wi); let wm = NSMenu(title:"Window"); wi.submenu = wm; NSApp.windowsMenu = wm
         wm.addItem(withTitle:"Minimize",action:#selector(NSWindow.miniaturize(_:)),keyEquivalent:"m")
         wm.addItem(withTitle:"Zoom",action:#selector(NSWindow.zoom(_:)),keyEquivalent:"")
+        wm.addItem(.separator()); wm.addItem(withTitle:"Instruments",action:#selector(openInstruments),keyEquivalent:"I").target = self
+    }
+    // analog discovery scope/logic analyzer in its own window, loading the same page in instruments mode
+    @objc func openInstruments() {
+        if let w = instrumentsWindow { w.makeKeyAndOrderFront(nil); return }
+        let config = WKWebViewConfiguration(); config.userContentController = content
+        let view = WKWebView(frame:.zero,configuration:config); view.navigationDelegate = self; view.uiDelegate = self; view.setValue(false,forKey:"drawsBackground")
+        if #available(macOS 13.3, *) { view.isInspectable = true }
+        let w = NSWindow(contentRect:NSRect(x:0,y:0,width:1280,height:820),styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)
+        w.title = "Aster Instruments — Analog Discovery 2"; w.isReleasedWhenClosed = false; w.minSize = NSSize(width:760,height:520); w.contentView = view; w.delegate = self
+        w.backgroundColor = window.backgroundColor; w.appearance = NSAppearance(named:.darkAqua)
+        if !w.setFrameUsingName("AsterInstrumentsWindow") { w.center() }; w.setFrameAutosaveName("AsterInstrumentsWindow")
+        instrumentsWindow = w; instrumentsWeb = view
+        view.loadFileURL(URL(string:resources.appendingPathComponent("Web/index.html").absoluteString+"#instruments")!,allowingReadAccessTo:resources)
+        w.makeKeyAndOrderFront(nil); event("instrumentsWindow",true)
     }
     @objc func menuAction(_ sender: NSMenuItem) { if let action = sender.representedObject as? String { event("menu",action) } }
     @objc func about() { NSApp.orderFrontStandardAboutPanel(options:[.applicationName:"Aster",.applicationVersion:"0.1.0",.version:"PIC18F87K22 · MPLAB X 6.20",.credits:NSAttributedString(string:"A focused workspace for PIC development.\nBuilt for your EasyPIC PRO v7 labs.")]) }
-    func event(_ name: String, _ value: Any) { DispatchQueue.main.async { [weak self] in self?.web.evaluateJavaScript("window.asterEvent?.(\(jsonString(name)),\(jsonString(value)))",completionHandler:nil) } }
+    // events reach the main window and the instruments window; each page ignores what it does not show
+    func event(_ name: String, _ value: Any) { DispatchQueue.main.async { [weak self] in for view in [self?.web,self?.instrumentsWeb].compactMap({$0}) { view.evaluateJavaScript("window.asterEvent?.(\(jsonString(name)),\(jsonString(value)))",completionHandler:nil) } } }
+    // the instruments page prefixes its request ids with "i"
+    func page(_ id: String) -> WKWebView { id.hasPrefix("i") ? instrumentsWeb ?? web : web }
+    func host(_ id: String) -> NSWindow { id.hasPrefix("i") ? instrumentsWindow ?? window : window }
     func respond(_ id: String, value: Any? = nil, error: String? = nil) {
         DispatchQueue.main.async { [weak self] in
-            self?.web.evaluateJavaScript("window.asterResponse(\(jsonString(id)),\(jsonString(value ?? NSNull())),\(jsonString(error ?? "")))",completionHandler:nil)
+            self?.page(id).evaluateJavaScript("window.asterResponse(\(jsonString(id)),\(jsonString(value ?? NSNull())),\(jsonString(error ?? "")))",completionHandler:nil)
         }
     }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -111,7 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if op == "exportText" {
             guard let content=args["content"] as? String,content.utf8.count <= 4_000_000,let name=args["name"] as? String else {respond(id,error:"Invalid export.");return}
             let panel=NSSavePanel();panel.nameFieldStringValue=URL(fileURLWithPath:name).lastPathComponent;panel.canCreateDirectories=true
-            panel.beginSheetModal(for:window) { response in
+            panel.beginSheetModal(for:host(id)) { response in
                 guard response == .OK,let url=panel.url else {self.respond(id,value:false);return}
                 do {try content.write(to:url,atomically:true,encoding:.utf8);self.respond(id,value:true)}catch {self.respond(id,error:error.localizedDescription)}
             };return
@@ -122,8 +144,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         if op == "confirm" {
             let alert = NSAlert(); alert.messageText = args["title"] as? String ?? "Continue?"; alert.informativeText = args["message"] as? String ?? ""; alert.addButton(withTitle:args["accept"] as? String ?? "Continue"); alert.addButton(withTitle:"Cancel")
-            alert.beginSheetModal(for:window) { self.respond(id,value:$0 == .alertFirstButtonReturn) }; return
+            alert.beginSheetModal(for:host(id)) { self.respond(id,value:$0 == .alertFirstButtonReturn) }; return
         }
+        if op == "openInstruments" { openInstruments(); respond(id,value:true); return }
+        if op == "instrumentsEval", testMode {
+            guard let view = instrumentsWeb, let js = args["js"] as? String else { respond(id,error:"The instruments window is not open."); return }
+            view.callAsyncJavaScript(js,arguments:[:],in:nil,in:.page) { result in
+                switch result { case .success(let value): self.respond(id,value:value); case .failure(let error): self.respond(id,error:error.localizedDescription) }
+            }; return
+        }
+        if op == "testEvent", testMode { event(args["name"] as? String ?? "",args["value"] ?? NSNull()); respond(id,value:true); return }
         if op == "closeApproved" { closing = true; respond(id,value:true); NSApp.terminate(nil); return }
         if op == "reveal" {
             let path = args["path"] as? String ?? core.project?.root.path ?? resources.path
@@ -156,10 +186,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if op == "uiTestDone", testMode {
             let dir = resources.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Tests")
             try? FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
-            try? JSONSerialization.data(withJSONObject:args,options:.prettyPrinted).write(to:dir.appendingPathComponent("ui-result.json"))
-            web.takeSnapshot(with:nil) { image,error in
-                if let image, let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data:tiff), let data = rep.representation(using:.png,properties:[:]) { try? data.write(to:dir.appendingPathComponent("ui-screenshot.png")) }
-                self.closing = true; NSApp.terminate(nil)
+            if JSONSerialization.isValidJSONObject(args) { do { try JSONSerialization.data(withJSONObject:args,options:.prettyPrinted).write(to:dir.appendingPathComponent("ui-result.json")) } catch { FileHandle.standardError.write(Data("ui-result.json: \(error)\n".utf8)) } } else { FileHandle.standardError.write(Data("ui-result.json: not valid JSON \(args)\n".utf8)) }
+            func save(_ image: NSImage?, _ name: String) { if let image, let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data:tiff), let data = rep.representation(using:.png,properties:[:]) { try? data.write(to:dir.appendingPathComponent(name)) } }
+            web.takeSnapshot(with:nil) { image,_ in
+                save(image,"ui-screenshot.png")
+                guard let view = self.instrumentsWeb else { self.closing = true; NSApp.terminate(nil); return }
+                view.takeSnapshot(with:nil) { image,_ in save(image,"ui-instruments-screenshot.png"); self.closing = true; NSApp.terminate(nil) }
             }; return
         }
         worker.async {
@@ -361,7 +393,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
     }
     // ops whose results the web ui uses to stay in sync with what claude did
-    static let bridgeSyncOps: Set<String> = ["open","new","debugStart","debugAction","inspect","waitStop","resetStopwatch","breakpoint","addSource","configuration","project"]
+    static let bridgeSyncOps: Set<String> = ["open","new","debugStart","debugAction","inspect","waitStop","resetStopwatch","breakpoint","addSource","configuration","project","ad2Capture","ad2Run"]
     static let bridgeUIActions: Set<String> = ["build","clean","debug","stop","stepi","next","reset","toggleRun","saveAll","regenerate"]
     func handleBridge(_ op: String,_ args: [String:Any],_ reply: @escaping AsterBridge.Reply) {
         event("bridge",["phase":"start","op":op])
@@ -377,6 +409,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             finish(["bridge":bridgeState(),"tools":core.tc.status(),"project":core.project.map { $0.info() as Any } ?? NSNull(),"debugging":core.debugger != nil,"running":core.debugger?.running ?? false],nil,"")
         case "screenshot":
             bridgeScreenshot(finish)
+        case "openInstruments":
+            DispatchQueue.main.async { self.openInstruments(); finish(true,nil,"") }
         case "uiAction":
             let name = args["action"] as? String ?? ""
             guard AppDelegate.bridgeUIActions.contains(name) else { finish(nil,"Unsupported UI action. Use one of: "+AppDelegate.bridgeUIActions.sorted().joined(separator:", "),""); return }
@@ -413,7 +447,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ()->Void) {
         let a = NSAlert(); a.messageText = message; a.beginSheetModal(for:window) { _ in completionHandler() }
     }
-    func windowShouldClose(_ sender: NSWindow) -> Bool { if closing { return true }; event("requestClose",true); return false }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { if sender === instrumentsWindow || closing { return true }; event("requestClose",true); return false }
+    // closing the instruments window stops a running acquisition, like waveforms
+    func windowWillClose(_ notification: Notification) {
+        guard let w = notification.object as? NSWindow, w === instrumentsWindow else { return }
+        ad2.stop(); instrumentsWeb?.navigationDelegate = nil; instrumentsWindow = nil; instrumentsWeb = nil; event("instrumentsWindow",false)
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply { if closing { return .terminateNow }; event("requestClose",true); return .terminateCancel }
     func applicationWillTerminate(_ notification: Notification) { bridge?.stop(); ad2.stop(wait:true); core.shutdown() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
